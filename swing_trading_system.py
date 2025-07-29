@@ -416,7 +416,7 @@ class SwingTradeDetector:
                  features_path="feature_columns_enhanced.pkl"):
         """Initialize the swing trade detector with enhanced model"""
         self.api_key = api_key
-        self.base_url = "https://www.alphavantage.co/query"
+        self.base_url = "https://www.alphavantage.co/query?"
         self.load_model(model_path, scaler_path, features_path)
     def load_model(self, model_path, scaler_path, features_path):
         """Load the pre-trained model and preprocessing components"""
@@ -438,68 +438,125 @@ class SwingTradeDetector:
                 self.lookforward_periods = 10 # Default fallback
         except Exception as e:
             raise ValueError(f"Error loading model components: {e}")
-    def fetch_alpha_vantage_data(self, symbol, function="TIME_SERIES_DAILY", outputsize="compact"):
-        """Fetch data from Alpha Vantage with robust error handling"""
+    def fetch_alpha_vantage_data(self, symbol, function="TIME_SERIES_DAILY", outputsize="compact", interval="monthly"):
+        """Fetch data from Alpha Vantage with robust error handling, supporting both stocks and commodities (copper, gold, aluminum, etc)"""
         try:
-            params = {
-                'function': function,
-                'symbol': symbol,
-                'outputsize': outputsize,
-                'apikey': self.api_key
+            # --- Commodity symbol mapping ---
+            commodity_map = {
+                'COPPER': 'COPPER',
+                'ALUMINUM': 'ALUMINUM',
+                'AL': 'ALUMINUM',
+                'GOLD': 'XAU',
+                'XAU': 'XAU',
+                'SILVER': 'XAG',
+                'XAG': 'XAG',
             }
-            response = requests.get(self.base_url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            # Check for API errors
-            if "Error Message" in data:
-                raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
-            if "Note" in data:
-                raise ValueError(f"Alpha Vantage API Rate Limit: {data['Note']}")
-            if "Information" in data:
-                raise ValueError(f"Alpha Vantage API Info: {data['Information']}")
-            # Determine the correct time series key
-            time_series_keys = [
-                "Time Series (Daily)",
-                "Time Series (60min)",
-                "Time Series (5min)",
-                "Weekly Adjusted Time Series",
-                "Monthly Adjusted Time Series"
-            ]
-            time_series_data = None
-            for key in time_series_keys:
-                if key in data:
-                    time_series_data = data[key]
-                    break
-            if time_series_data is None:
-                raise ValueError("No time series data found in API response")
-            # Convert to DataFrame
-            df_data = []
-            for timestamp, values in time_series_data.items():
-                try:
-                    df_data.append({
-                        'timestamp': pd.to_datetime(timestamp),
-                        'open': float(values['1. open']),
-                        'high': float(values['2. high']),
-                        'low': float(values['3. low']),
-                        'close': float(values['4. close']),
-                        'volume': int(values['5. volume'])
-                    })
-                except KeyError as e:
-                    # Handle different API response formats
-                    df_data.append({
-                        'timestamp': pd.to_datetime(timestamp),
-                        'open': float(values.get('1. open', values.get('open', 0))),
-                        'high': float(values.get('2. high', values.get('high', 0))),
-                        'low': float(values.get('3. low', values.get('low', 0))),
-                        'close': float(values.get('4. close', values.get('close', 0))),
-                        'volume': int(values.get('5. volume', values.get('volume', 0)))
-                    })
-            df = pd.DataFrame(df_data)
-            df['adj_close'] = df['close']  # Alpha Vantage doesn't provide adjusted close for intraday
-            df.set_index('timestamp', inplace=True)
-            df = df.sort_index()
-            print(f"Fetched {len(df)} data points for {symbol}")
-            return df
+            symbol_upper = symbol.upper()
+            is_commodity = symbol_upper in commodity_map
+            if is_commodity:
+                commodity_func = commodity_map[symbol_upper]
+                params = {
+                    'function': commodity_func,
+                    'interval': interval,  # monthly/quarterly/annual
+                    'apikey': self.api_key
+                }
+                response = requests.get(self.base_url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                # Check for API errors
+                if "Error Message" in data:
+                    raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
+                if "Note" in data:
+                    raise ValueError(f"Alpha Vantage API Rate Limit: {data['Note']}")
+                if "Information" in data:
+                    raise ValueError(f"Alpha Vantage API Info: {data['Information']}")
+                # Parse commodity data (usually under 'data' key)
+                if 'data' not in data:
+                    raise ValueError("No commodity data found in API response")
+                df_data = []
+                for row in data['data']:
+                    # Each row: {'date': '2023-12-31', 'value': 'value'}
+                    try:
+                        df_data.append({
+                            'timestamp': pd.to_datetime(row['date']),
+                            'open': float(row.get('value', 0)),
+                            'high': float(row.get('value', 0)),
+                            'low': float(row.get('value', 0)),
+                            'close': float(row.get('value', 0)),
+                            'volume': 0  # No volume for commodities
+                        })
+                    except Exception as e:
+                        continue
+                df = pd.DataFrame(df_data)
+                if df.empty:
+                    print(f"No data returned for commodity {symbol}")
+                    return None
+                df['adj_close'] = df['close']
+                df.set_index('timestamp', inplace=True)
+                df = df.sort_index()
+                print(f"Fetched {len(df)} data points for {symbol} (commodity)")
+                return df
+            else:
+                # --- Stock/ETF logic (existing) ---
+                params = {
+                    'function': function,
+                    'symbol': symbol,
+                    'outputsize': outputsize,
+                    'apikey': self.api_key
+                }
+                response = requests.get(self.base_url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                # Check for API errors
+                if "Error Message" in data:
+                    raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
+                if "Note" in data:
+                    raise ValueError(f"Alpha Vantage API Rate Limit: {data['Note']}")
+                if "Information" in data:
+                    raise ValueError(f"Alpha Vantage API Info: {data['Information']}")
+                # Determine the correct time series key
+                time_series_keys = [
+                    "Time Series (Daily)",
+                    "Time Series (60min)",
+                    "Time Series (5min)",
+                    "Weekly Adjusted Time Series",
+                    "Monthly Adjusted Time Series"
+                ]
+                time_series_data = None
+                for key in time_series_keys:
+                    if key in data:
+                        time_series_data = data[key]
+                        break
+                if time_series_data is None:
+                    raise ValueError("No time series data found in API response")
+                # Convert to DataFrame
+                df_data = []
+                for timestamp, values in time_series_data.items():
+                    try:
+                        df_data.append({
+                            'timestamp': pd.to_datetime(timestamp),
+                            'open': float(values['1. open']),
+                            'high': float(values['2. high']),
+                            'low': float(values['3. low']),
+                            'close': float(values['4. close']),
+                            'volume': int(values['5. volume'])
+                        })
+                    except KeyError as e:
+                        # Handle different API response formats
+                        df_data.append({
+                            'timestamp': pd.to_datetime(timestamp),
+                            'open': float(values.get('1. open', values.get('open', 0))),
+                            'high': float(values.get('2. high', values.get('high', 0))),
+                            'low': float(values.get('3. low', values.get('low', 0))),
+                            'close': float(values.get('4. close', values.get('close', 0))),
+                            'volume': int(values.get('5. volume', values.get('volume', 0)))
+                        })
+                df = pd.DataFrame(df_data)
+                df['adj_close'] = df['close']  # Alpha Vantage doesn't provide adjusted close for intraday
+                df.set_index('timestamp', inplace=True)
+                df = df.sort_index()
+                print(f"Fetched {len(df)} data points for {symbol}")
+                return df
         except requests.exceptions.RequestException as e:
             print(f"Network error fetching data for {symbol}: {e}")
             return None
