@@ -12,35 +12,35 @@ import requests
 import time
 import warnings
 from datetime import datetime, timedelta
+import sys
 warnings.filterwarnings('ignore')
 
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 class DataProcessor:
-    """Handles data loading and preprocessing operations"""
     @staticmethod
     def load_and_validate_data(file_path):
-        """Load and validate CSV data with robust error handling"""
         try:
-            # Read CSV file
             df = pd.read_csv(file_path)
             print(f"Loaded data from {file_path}")
             print(f"Original shape: {df.shape}")
             print(f"Original columns: {list(df.columns)}")
-            # Check if index is already datetime or needs conversion
             if 'Date' in df.columns:
                 df['Date'] = pd.to_datetime(df['Date'])
                 df.set_index('Date', inplace=True)
             elif df.index.name == 'Date' or isinstance(df.index, pd.DatetimeIndex):
-                # Index is already datetime
                 pass
             else:
-                # Try to convert index to datetime
                 try:
                     df.index = pd.to_datetime(df.index)
                 except:
                     print("Warning: Could not convert index to datetime")
-            # Standardize column names to lowercase for consistency
             df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
-            # Map columns to expected format
             column_mapping = {
                 'open': 'open',
                 'high': 'high', 
@@ -50,24 +50,18 @@ class DataProcessor:
                 'dividends': 'dividends',
                 'stock_splits': 'stock_splits'
             }
-            # Create adj_close if it doesn't exist (use close price)
             if 'adj_close' not in df.columns and 'close' in df.columns:
                 df['adj_close'] = df['close'].copy()
-            # Verify required columns exist
             required_columns = ['open', 'high', 'low', 'close', 'volume']
             missing_columns = [col for col in required_columns if col not in df.columns]
             if missing_columns:
                 raise ValueError(f"Missing required columns: {missing_columns}")
-            # Convert numeric columns and handle any conversion errors
             numeric_columns = ['open', 'high', 'low', 'close', 'adj_close', 'volume']
             for col in numeric_columns:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
-            # Remove rows with NaN values in critical columns
             df = df.dropna(subset=required_columns)
-            # Sort by index (date)
             df = df.sort_index()
-            # Remove duplicates
             df = df[~df.index.duplicated(keep='first')]
             print(f"Processed shape: {df.shape}")
             print(f"Date range: {df.index.min()} to {df.index.max()}")
@@ -79,22 +73,17 @@ class DataProcessor:
             raise
 
 class TechnicalIndicators:
-    """Creates comprehensive technical indicators for trading analysis"""
     @staticmethod
     def create_all_indicators(df):
-        """Create comprehensive technical indicators"""
         df = df.copy()
-        # Use adjusted close for calculations, fallback to close if not available
         price_col = 'adj_close' if 'adj_close' in df.columns else 'close'
         print(f"Creating technical indicators using {price_col} column")
-        # Basic price features
         df['price_change'] = df[price_col].pct_change()
         df['high_low_range'] = (df['high'] - df['low']) / df[price_col]
         df['open_close_change'] = (df[price_col] - df['open']) / df['open']
         df['body_size'] = abs(df[price_col] - df['open']) / df[price_col]
         df['upper_shadow'] = (df['high'] - df[['open', price_col]].max(axis=1)) / df[price_col]
         df['lower_shadow'] = (df[['open', price_col]].min(axis=1) - df['low']) / df[price_col]
-        # Moving averages and ratios
         ma_periods = [5, 10, 20, 50, 100, 200]
         for period in ma_periods:
             if len(df) >= period:
@@ -102,20 +91,16 @@ class TechnicalIndicators:
                 df[f'ema_{period}'] = ta.trend.ema_indicator(df[price_col], window=period)
                 df[f'price_sma_{period}_ratio'] = df[price_col] / df[f'sma_{period}']
                 df[f'price_ema_{period}_ratio'] = df[price_col] / df[f'ema_{period}']
-                # Moving average slopes
                 df[f'sma_{period}_slope'] = df[f'sma_{period}'].pct_change(periods=5)
                 df[f'ema_{period}_slope'] = df[f'ema_{period}'].pct_change(periods=5)
-        # RSI with multiple periods
         for rsi_period in [14, 21]:
             df[f'rsi_{rsi_period}'] = ta.momentum.rsi(df[price_col], window=rsi_period)
             df[f'rsi_{rsi_period}_change'] = df[f'rsi_{rsi_period}'].diff()
-        # MACD with different settings
         macd_12_26 = ta.trend.MACD(df[price_col], window_slow=26, window_fast=12, window_sign=9)
         df['macd'] = macd_12_26.macd()
         df['macd_signal'] = macd_12_26.macd_signal()
         df['macd_histogram'] = macd_12_26.macd_diff()
         df['macd_crossover'] = (df['macd'] > df['macd_signal']).astype(int)
-        # Bollinger Bands
         bb_periods = [20, 50]
         for period in bb_periods:
             if len(df) >= period:
@@ -126,7 +111,6 @@ class TechnicalIndicators:
                 df[f'bb_{period}_width'] = (df[f'bb_{period}_upper'] - df[f'bb_{period}_lower']) / df[f'bb_{period}_middle']
                 df[f'bb_{period}_position'] = (df[price_col] - df[f'bb_{period}_lower']) / (df[f'bb_{period}_upper'] - df[f'bb_{period}_lower'])
                 df[f'bb_{period}_squeeze'] = (df[f'bb_{period}_width'] < df[f'bb_{period}_width'].rolling(20).mean()).astype(int)
-        # Volume indicators (if volume data is meaningful)
         if df['volume'].sum() > 0 and not df['volume'].isna().all():
             df['volume_sma_20'] = ta.trend.sma_indicator(df['volume'], window=20)
             df['volume_ratio'] = df['volume'] / df['volume_sma_20']
@@ -134,37 +118,30 @@ class TechnicalIndicators:
             df['on_balance_volume'] = ta.volume.on_balance_volume(df[price_col], df['volume'])
             df['volume_weighted_price'] = ta.volume.volume_weighted_average_price(df['high'], df['low'], df[price_col], df['volume'])
         else:
-            # Set volume indicators to neutral values if volume data is not meaningful
             df['volume_sma_20'] = 1
             df['volume_ratio'] = 1
             df['volume_price_trend'] = 0
             df['on_balance_volume'] = 0
             df['volume_weighted_price'] = df[price_col]
-        # Volatility indicators
         df['atr_14'] = ta.volatility.average_true_range(df['high'], df['low'], df[price_col], window=14)
         df['atr_21'] = ta.volatility.average_true_range(df['high'], df['low'], df[price_col], window=21)
         df['volatility_ratio'] = df['atr_14'] / df['atr_21']
-        # Momentum indicators
         df['roc_10'] = ta.momentum.roc(df[price_col], window=10)
         df['roc_20'] = ta.momentum.roc(df[price_col], window=20)
         df['williams_r'] = ta.momentum.williams_r(df['high'], df['low'], df[price_col], lbp=14)
         df['stoch_k'] = ta.momentum.stoch(df['high'], df['low'], df[price_col])
         df['stoch_d'] = ta.momentum.stoch_signal(df['high'], df['low'], df[price_col])
-        # Trend indicators
         df['adx'] = ta.trend.adx(df['high'], df['low'], df[price_col], window=14)
         df['cci'] = ta.trend.cci(df['high'], df['low'], df[price_col], window=20)
-        # Price patterns
         df['doji'] = (abs(df[price_col] - df['open']) / (df['high'] - df['low']) < 0.1).astype(int)
         df['hammer'] = ((df['low'] < df[['open', price_col]].min(axis=1)) & 
                        (df['high'] - df[['open', price_col]].max(axis=1) < 0.3 * (df['high'] - df['low']))).astype(int)
-        # Lagged features for time series patterns
         lag_periods = [1, 2, 3, 5]
         lag_features = ['price_change', 'rsi_14', 'macd_histogram', 'volume_ratio', 'atr_14']
         for feature in lag_features:
             if feature in df.columns:
                 for lag in lag_periods:
                     df[f'{feature}_lag_{lag}'] = df[feature].shift(lag)
-        # Rolling statistics
         for window in [5, 10, 20]:
             df[f'price_volatility_{window}'] = df['price_change'].rolling(window).std()
             df[f'price_momentum_{window}'] = df[price_col].pct_change(periods=window)
@@ -173,19 +150,10 @@ class TechnicalIndicators:
         return df
 
 class SwingTradeTrainer:
-    """Advanced swing trade training system with comprehensive features"""
     def __init__(self, swing_threshold=0.15, lookforward_periods=10, min_hold_periods=3):
-        """
-        Initialize the swing trade trainer
-        Parameters:
-        swing_threshold: Minimum price movement to consider a swing (default 15%)
-        lookforward_periods: How many periods to look ahead for swing detection
-        min_hold_periods: Minimum periods to hold before taking profit
-        """
         self.swing_threshold = swing_threshold
         self.lookforward_periods = lookforward_periods
         self.min_hold_periods = min_hold_periods
-        # Enhanced Random Forest with better parameters for imbalanced data
         self.model = RandomForestClassifier(
             n_estimators=100,  # Reduced for faster training with small positive class
             max_depth=8,       # Reduced to prevent overfitting
@@ -205,7 +173,6 @@ class SwingTradeTrainer:
     def load_historical_data(self, data_directory):
         """Load and process historical data from directory"""
         print(f"Loading data from directory: {data_directory}")
-        # Find supported files
         supported_extensions = ['*.csv', '*.parquet', '*.xlsx']
         all_files = []
         for extension in supported_extensions:
@@ -213,7 +180,6 @@ class SwingTradeTrainer:
         if not all_files:
             raise ValueError(f"No supported data files found in {data_directory}")
         print(f"Found {len(all_files)} data files")
-        # Load and combine all data files
         dataframes = []
         for file_path in all_files:
             try:
@@ -226,7 +192,6 @@ class SwingTradeTrainer:
                 continue
         if not dataframes:
             raise ValueError("No valid data files could be loaded")
-        # Combine all dataframes
         combined_df = pd.concat(dataframes, ignore_index=False)
         combined_df = combined_df.sort_index()
         combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
@@ -238,28 +203,22 @@ class SwingTradeTrainer:
         df = df.copy()
         price_col = 'adj_close' if 'adj_close' in df.columns else 'close'
         print(f"Creating swing labels with {self.swing_threshold*100}% threshold over {self.lookforward_periods} periods")
-        # Initialize labels
         df['swing_label'] = 0
         df['swing_profit_potential'] = 0
         df['swing_risk'] = 0
-        # Use a more lenient approach to create more balanced labels
         for i in range(len(df) - self.lookforward_periods):
             current_price = df.iloc[i][price_col]
-            # Look forward for profit opportunities
             future_slice = df.iloc[i+self.min_hold_periods:i+self.lookforward_periods+1]
             if len(future_slice) > 0:
                 max_future_high = future_slice['high'].max()
                 min_future_low = future_slice['low'].min()
-                # Calculate potential profit and risk
                 upside_potential = (max_future_high - current_price) / current_price
                 downside_risk = (current_price - min_future_low) / current_price
-                # More lenient labeling: reduce threshold and remove risk-reward requirement
                 adjusted_threshold = max(0.05, self.swing_threshold * 0.5)  # At least 5% or half the original threshold
                 if upside_potential >= adjusted_threshold:
                     df.iloc[i, df.columns.get_loc('swing_label')] = 1
                     df.iloc[i, df.columns.get_loc('swing_profit_potential')] = upside_potential
                     df.iloc[i, df.columns.get_loc('swing_risk')] = downside_risk
-        # Calculate label statistics
         swing_count = df['swing_label'].sum()
         total_count = len(df)
         swing_percentage = (swing_count / total_count) * 100
@@ -280,7 +239,6 @@ class SwingTradeTrainer:
         target_positives = int(len(df) * target_positive_ratio)
         if current_positives < target_positives:
             needed_positives = target_positives - current_positives
-            # Find candidates with smaller price movements
             for i in range(len(df) - self.lookforward_periods):
                 if df.iloc[i]['swing_label'] == 0 and additional_positives < needed_positives:
                     current_price = df.iloc[i][price_col]
@@ -288,26 +246,22 @@ class SwingTradeTrainer:
                     if len(future_slice) > 0:
                         max_future_high = future_slice['high'].max()
                         upside_potential = (max_future_high - current_price) / current_price
-                        # Lower threshold for additional samples
                         if upside_potential >= 0.03:  # 3% minimum
                             df.iloc[i, df.columns.get_loc('swing_label')] = 1
                             df.iloc[i, df.columns.get_loc('swing_profit_potential')] = upside_potential
                             additional_positives += 1
             print(f"Added {additional_positives} additional positive samples for balance")
     def prepare_training_data(self, df):
-        """Prepare features and labels for training"""
         print("Creating technical indicators...")
         df_features = TechnicalIndicators.create_all_indicators(df)
         print("Creating swing labels...")
         df_labeled = self.create_swing_labels(df_features)
-        # Select feature columns (exclude price data and labels)
+
         exclude_cols = ['open', 'high', 'low', 'close', 'adj_close', 'volume', 'dividends', 
                        'stock_splits', 'swing_label', 'swing_profit_potential', 'swing_risk']
         feature_cols = [col for col in df_labeled.columns if col not in exclude_cols]
-        # Handle missing values
         df_labeled[feature_cols] = df_labeled[feature_cols].fillna(method='ffill').fillna(method='bfill')
         df_labeled[feature_cols] = df_labeled[feature_cols].replace([np.inf, -np.inf], 0)
-        # Remove rows with remaining NaN values
         df_clean = df_labeled.dropna(subset=feature_cols + ['swing_label'])
         print(f"Feature engineering complete. Features: {len(feature_cols)}")
         X = df_clean[feature_cols]
@@ -315,26 +269,22 @@ class SwingTradeTrainer:
         self.feature_columns = feature_cols
         return X, y, df_clean
     def train(self, data_directory):
-        """Train the enhanced Random Forest model"""
         print(f"=== Training Swing Trade Predictor ===")
         print(f"Swing threshold: {self.swing_threshold*100}%")
         print(f"Lookforward periods: {self.lookforward_periods}")
         print(f"Data directory: {data_directory}")
-        # Load and prepare data
         df = self.load_historical_data(data_directory)
         if len(df) < 500:
             raise ValueError("Insufficient data for training (minimum 500 samples required)")
         X, y, df_processed = self.prepare_training_data(df)
         print(f"Training dataset shape: {X.shape}")
         print(f"Swing opportunities: {sum(y)} out of {len(y)} samples ({sum(y)/len(y)*100:.2f}%)")
-        # Check for extreme class imbalance
         if sum(y) < 10:
             print("⚠️  WARNING: Very few positive samples detected!")
             print("This may lead to poor model performance. Consider:")
             print("- Lowering the swing threshold")
             print("- Using more historical data")
             print("- Adjusting the lookforward period")
-        # For extreme imbalance, use stratified split with special handling
         try:
             if sum(y) > 1:  # Need at least 2 positive samples for stratification
                 X_train, X_test, y_train, y_test = train_test_split(
@@ -354,13 +304,10 @@ class SwingTradeTrainer:
             y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
         print(f"Training set: {len(X_train)} samples")
         print(f"Test set: {len(X_test)} samples")
-        # Scale features
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
-        # Train model
         print("Training Random Forest model...")
         self.model.fit(X_train_scaled, y_train)
-        # Evaluate model
         train_score = self.model.score(X_train_scaled, y_train)
         test_score = self.model.score(X_test_scaled, y_test)
         oob_score = self.model.oob_score_
@@ -374,14 +321,12 @@ class SwingTradeTrainer:
         print(classification_report(y_test, y_pred))
         print(f"\n=== Confusion Matrix ===")
         print(confusion_matrix(y_test, y_pred))
-        # Feature importance analysis
         feature_importance = pd.DataFrame({
             'feature': self.feature_columns,
             'importance': self.model.feature_importances_
         }).sort_values('importance', ascending=False)
         print(f"\n=== Top 20 Most Important Features ===")
         print(feature_importance.head(20))
-        # Store training statistics
         self.training_stats = {
             'train_score': train_score,
             'test_score': test_score,
@@ -397,7 +342,6 @@ class SwingTradeTrainer:
     def save_model(self, model_filename="swing_model_enhanced.pkl", 
                    scaler_filename="swing_scaler_enhanced.pkl",
                    features_filename="feature_columns_enhanced.pkl"):
-        """Save the trained model and preprocessing components"""
         if not self.is_trained:
             raise ValueError("Model must be trained before saving")
         joblib.dump(self.model, model_filename)
@@ -410,38 +354,32 @@ class SwingTradeTrainer:
         print(f"Training stats saved as training_stats.pkl")
 
 class SwingTradeDetector:
-    """Enhanced real-time swing trade detection system"""
     def __init__(self, api_key, model_path="swing_model_enhanced.pkl", 
                  scaler_path="swing_scaler_enhanced.pkl", 
                  features_path="feature_columns_enhanced.pkl"):
-        """Initialize the swing trade detector with enhanced model"""
         self.api_key = api_key
         self.base_url = "https://www.alphavantage.co/query?"
         self.load_model(model_path, scaler_path, features_path)
     def load_model(self, model_path, scaler_path, features_path):
-        """Load the pre-trained model and preprocessing components"""
         try:
-            self.model = joblib.load(model_path)
-            self.scaler = joblib.load(scaler_path)
-            self.feature_columns = joblib.load(features_path)
+            self.model = joblib.load(resource_path(model_path))
+            self.scaler = joblib.load(resource_path(scaler_path))
+            self.feature_columns = joblib.load(resource_path(features_path))
             try:
-                self.training_stats = joblib.load("training_stats.pkl")
+                self.training_stats = joblib.load(resource_path("training_stats.pkl"))
                 print(f"Model loaded successfully!")
                 print(f"Training accuracy: {self.training_stats.get('test_score', 'N/A'):.4f}")
                 print(f"Features: {len(self.feature_columns)}")
-                # Store training parameters for stop-loss/take-profit calculation
                 self.swing_threshold = self.training_stats.get('swing_threshold', 0.15)
                 self.lookforward_periods = self.training_stats.get('lookforward_periods', 10)
             except:
                 print("Model loaded successfully! (No training stats available)")
-                self.swing_threshold = 0.15 # Default fallback
-                self.lookforward_periods = 10 # Default fallback
+                self.swing_threshold = 0.15
+                self.lookforward_periods = 10
         except Exception as e:
             raise ValueError(f"Error loading model components: {e}")
     def fetch_alpha_vantage_data(self, symbol, function="TIME_SERIES_DAILY", outputsize="compact", interval="monthly"):
-        """Fetch data from Alpha Vantage with robust error handling, supporting both stocks and commodities (copper, gold, aluminum, etc)"""
         try:
-            # --- Commodity symbol mapping ---
             commodity_map = {
                 'COPPER': 'COPPER',
                 'ALUMINUM': 'ALUMINUM',
@@ -457,25 +395,22 @@ class SwingTradeDetector:
                 commodity_func = commodity_map[symbol_upper]
                 params = {
                     'function': commodity_func,
-                    'interval': interval,  # monthly/quarterly/annual
+                    'interval': interval,
                     'apikey': self.api_key
                 }
                 response = requests.get(self.base_url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
-                # Check for API errors
                 if "Error Message" in data:
                     raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
                 if "Note" in data:
                     raise ValueError(f"Alpha Vantage API Rate Limit: {data['Note']}")
                 if "Information" in data:
                     raise ValueError(f"Alpha Vantage API Info: {data['Information']}")
-                # Parse commodity data (usually under 'data' key)
                 if 'data' not in data:
                     raise ValueError("No commodity data found in API response")
                 df_data = []
                 for row in data['data']:
-                    # Each row: {'date': '2023-12-31', 'value': 'value'}
                     try:
                         df_data.append({
                             'timestamp': pd.to_datetime(row['date']),
@@ -483,7 +418,7 @@ class SwingTradeDetector:
                             'high': float(row.get('value', 0)),
                             'low': float(row.get('value', 0)),
                             'close': float(row.get('value', 0)),
-                            'volume': 0  # No volume for commodities
+                            'volume': 0
                         })
                     except Exception as e:
                         continue
@@ -497,7 +432,6 @@ class SwingTradeDetector:
                 print(f"Fetched {len(df)} data points for {symbol} (commodity)")
                 return df
             else:
-                # --- Stock/ETF logic (existing) ---
                 params = {
                     'function': function,
                     'symbol': symbol,
@@ -507,14 +441,13 @@ class SwingTradeDetector:
                 response = requests.get(self.base_url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
-                # Check for API errors
                 if "Error Message" in data:
                     raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
                 if "Note" in data:
                     raise ValueError(f"Alpha Vantage API Rate Limit: {data['Note']}")
                 if "Information" in data:
                     raise ValueError(f"Alpha Vantage API Info: {data['Information']}")
-                # Determine the correct time series key
+
                 time_series_keys = [
                     "Time Series (Daily)",
                     "Time Series (60min)",
@@ -529,7 +462,6 @@ class SwingTradeDetector:
                         break
                 if time_series_data is None:
                     raise ValueError("No time series data found in API response")
-                # Convert to DataFrame
                 df_data = []
                 for timestamp, values in time_series_data.items():
                     try:
@@ -542,7 +474,6 @@ class SwingTradeDetector:
                             'volume': int(values['5. volume'])
                         })
                     except KeyError as e:
-                        # Handle different API response formats
                         df_data.append({
                             'timestamp': pd.to_datetime(timestamp),
                             'open': float(values.get('1. open', values.get('open', 0))),
@@ -552,7 +483,7 @@ class SwingTradeDetector:
                             'volume': int(values.get('5. volume', values.get('volume', 0)))
                         })
                 df = pd.DataFrame(df_data)
-                df['adj_close'] = df['close']  # Alpha Vantage doesn't provide adjusted close for intraday
+                df['adj_close'] = df['close']
                 df.set_index('timestamp', inplace=True)
                 df = df.sort_index()
                 print(f"Fetched {len(df)} data points for {symbol}")
@@ -566,13 +497,10 @@ class SwingTradeDetector:
 
     def _calculate_stop_take_profit(self, entry_price, atr_value, swing_threshold, risk_reward_ratio=0.5):
         """Calculate stop-loss and take-profit levels."""
-        # Take-profit based on training threshold or ATR, whichever is larger
-        tp_amount = max(entry_price * swing_threshold, atr_value * 2) # Example: 2 * ATR as TP
+        tp_amount = max(entry_price * swing_threshold, atr_value * 2)
         take_profit = entry_price + tp_amount
 
-        # Stop-loss based on ATR or a fixed percentage/risk-reward ratio
-        sl_amount = tp_amount * risk_reward_ratio # Example: Half the TP amount
-        # Ensure stop-loss is not too close to entry (e.g., minimum 1% or 1 ATR)
+        sl_amount = tp_amount * risk_reward_ratio
         min_sl_amount = max(entry_price * 0.01, atr_value)
         sl_amount = max(sl_amount, min_sl_amount)
         stop_loss = entry_price - sl_amount
@@ -580,24 +508,19 @@ class SwingTradeDetector:
         return stop_loss, take_profit
 
     def detect_swing_opportunity(self, df, symbol="Unknown"):
-        """Detect swing trade opportunities with enhanced analysis and robust feature handling"""
         try:
             if len(df) < 100:
                 print(f"Insufficient data for {symbol} (need at least 100 data points)")
                 return None
-            # Create technical indicators
             df_features = TechnicalIndicators.create_all_indicators(df)
-            # Handle missing values more aggressively
             df_features = df_features.fillna(method='ffill').fillna(method='bfill').fillna(0)
             df_features = df_features.replace([np.inf, -np.inf], 0)
             print(f"Features created for {symbol}: {len(df_features.columns)} columns")
             print(f"Required features: {len(self.feature_columns)}")
-            # Ensure ALL required features are present with proper handling
             missing_features = []
             for feature in self.feature_columns:
                 if feature not in df_features.columns:
                     missing_features.append(feature)
-                    # Add missing features with meaningful defaults
                     if 'sma' in feature or 'ema' in feature:
                         df_features[feature] = df_features['close'].rolling(20).mean().fillna(df_features['close'])
                     elif 'rsi' in feature:
@@ -612,11 +535,8 @@ class SwingTradeDetector:
                         df_features[feature] = 0   # Default to zero
             if missing_features:
                 print(f"Added {len(missing_features)} missing features with defaults for {symbol}")
-            # Clean the data and ensure no NaN/inf values
             df_clean = df_features.copy()
-            # Double-check for any remaining issues
             feature_data = df_clean[self.feature_columns]
-            # Check for NaN or infinite values
             nan_count = feature_data.isna().sum().sum()
             inf_count = np.isinf(feature_data.values).sum()
             if nan_count > 0 or inf_count > 0:
@@ -626,35 +546,26 @@ class SwingTradeDetector:
             if len(df_clean) == 0:
                 print(f"No data remaining after cleaning for {symbol}")
                 return None
-            # Get latest data point
             latest_data = df_clean.iloc[-1:][self.feature_columns]
-            # Verify data shape and content
             print(f"Latest data shape: {latest_data.shape}")
-            print(f"Data sample: {latest_data.iloc[0][:5].values}")  # Show first 5 features
-            # Scale features
+            print(f"Data sample: {latest_data.iloc[0][:5].values}")
             try:
                 latest_scaled = self.scaler.transform(latest_data)
             except Exception as scale_error:
                 print(f"Scaling error for {symbol}: {scale_error}")
                 return None
-            # Make prediction
             try:
                 prediction = self.model.predict(latest_scaled)[0]
                 probabilities = self.model.predict_proba(latest_scaled)[0]
             except Exception as pred_error:
                 print(f"Prediction error for {symbol}: {pred_error}")
                 return None
-            # Get current market data
             current_price = df_clean.iloc[-1]['close']
             current_volume = df_clean.iloc[-1]['volume']
             timestamp = df_clean.index[-1]
-            atr_value = df_clean.iloc[-1].get('atr_14', 0) # Get ATR value for SL/TP calculation
-
-            # Calculate additional metrics safely
+            atr_value = df_clean.iloc[-1].get('atr_14', 0)
             price_change_1d = df_clean.iloc[-1].get('price_change', 0)
             rsi = df_clean.iloc[-1].get('rsi_14', 50)
-
-            # --- Calculate Stop-Loss and Take-Profit ---
             stop_loss, take_profit = self._calculate_stop_take_profit(
                 current_price, atr_value, self.swing_threshold
             )
@@ -683,7 +594,6 @@ class SwingTradeDetector:
     def analyze_single_symbol(self, symbol):
         """Analyze a single symbol for swing trade opportunities"""
         print(f"Analyzing {symbol}...")
-        # Try daily data first, then hourly if needed
         df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY")
         if df is None or len(df) < 50:
             print(f"Insufficient data available for {symbol}")
@@ -715,16 +625,12 @@ class SwingTradeDetector:
                 print(f"📈 MODERATE BUY SIGNAL")
             else:
                 print(f"⚠️   WEAK BUY SIGNAL")
-            # --- Display Stop-Loss and Take-Profit ---
             print(f"Recommended Stop-Loss: ${result['stop_loss']:.2f}")
             print(f"Recommended Take-Profit: ${result['take_profit']:.2f}")
         else:
             print(f"❌ No swing opportunity detected")
             print(f"No-Swing Probability: {result['no_swing_probability']:.1%}")
             print(f"Confidence Level: {result['confidence_level']}")
-            # --- Display Stop-Loss and Take-Profit even if no opportunity (optional) ---
-            # print(f"Stop-Loss (if bought): ${result['stop_loss']:.2f}")
-            # print(f"Take-Profit (if bought): ${result['take_profit']:.2f}")
         print(f"{'='*60}\n")
     def monitor_multiple_symbols(self, symbols, check_interval=300, alert_threshold=0.7):
         """Monitor multiple symbols for swing trade opportunities"""
@@ -745,7 +651,6 @@ class SwingTradeDetector:
                         result = self.analyze_single_symbol(symbol)
                         if result and result['is_swing_opportunity'] and result['swing_probability'] >= alert_threshold:
                             opportunities.append(result)
-                        # Add delay between API calls to avoid rate limiting
                         time.sleep(2)
                     except Exception as e:
                         print(f"Error analyzing {symbol}: {e}")
@@ -754,7 +659,7 @@ class SwingTradeDetector:
                     print(f"\n🔔 FOUND {len(opportunities)} HIGH-PROBABILITY OPPORTUNITIES:")
                     for opp in sorted(opportunities, key=lambda x: x['swing_probability'], reverse=True):
                         print(f"  {opp['symbol']}: {opp['swing_probability']:.1%} at ${opp['current_price']:.2f}")
-                        print(f"     SL: ${opp['stop_loss']:.2f}, TP: ${opp['take_profit']:.2f}") # Add SL/TP to monitor output
+                        print(f"     SL: ${opp['stop_loss']:.2f}, TP: ${opp['take_profit']:.2f}")
                 else:
                     print("No high-probability opportunities found in current scan.")
                 print(f"Next scan in {check_interval} seconds...\n")
@@ -766,29 +671,24 @@ class SwingTradeDetector:
     def backtest_strategy(self, symbol, days_back=90):
         """Simple backtest of the swing trading strategy with stop-loss and take-profit"""
         print(f"Backtesting swing strategy for {symbol} over {days_back} days...")
-        # Fetch historical data
         df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY", outputsize="full")
         if df is None or len(df) < days_back:
             print(f"Insufficient data for backtesting {symbol}")
             return None
-        # Use recent data for backtesting
         df_recent = df.tail(days_back).copy()
-        # Create features for all data points
         df_features = TechnicalIndicators.create_all_indicators(df_recent)
         df_features = df_features.fillna(method='ffill').fillna(method='bfill')
         df_features = df_features.replace([np.inf, -np.inf], 0)
-        # Ensure all required features are present
         for feature in self.feature_columns:
             if feature not in df_features.columns:
                 df_features[feature] = 0
 
-        # --- Get training parameters for SL/TP ---
         swing_threshold = getattr(self, 'swing_threshold', 0.15)
         lookforward_periods = getattr(self, 'lookforward_periods', 10)
 
         trades = []
         position = None
-        for i in range(50, len(df_features) - 10):  # Leave buffer for features and exit
+        for i in range(50, len(df_features) - 10):
             try:
                 current_data = df_features.iloc[i:i+1][self.feature_columns]
                 current_scaled = self.scaler.transform(current_data)
@@ -796,11 +696,8 @@ class SwingTradeDetector:
                 probability = self.model.predict_proba(current_scaled)[0][1]
                 current_price = df_features.iloc[i]['close']
                 current_date = df_features.index[i]
-                atr_value = df_features.iloc[i].get('atr_14', 0) # Get ATR for SL/TP
-
-                # Entry logic
+                atr_value = df_features.iloc[i].get('atr_14', 0) 
                 if position is None and prediction == 1 and probability >= 0.7:
-                    # --- Calculate Stop-Loss and Take-Profit on entry ---
                     stop_loss, take_profit = self._calculate_stop_take_profit(
                         current_price, atr_value, swing_threshold
                     )
@@ -811,18 +708,15 @@ class SwingTradeDetector:
                         'stop_loss': stop_loss,
                         'take_profit': take_profit
                     }
-                # Exit logic (Exit on stop-loss, take-profit, or max hold time)
                 elif position is not None:
                     days_held = (current_date - position['entry_date']).days
                     profit_pct = (current_price - position['entry_price']) / position['entry_price']
-
-                    # --- Check for exit conditions ---
                     exit_reason = None
                     if current_price <= position['stop_loss']:
                         exit_reason = "Stop-Loss"
                     elif current_price >= position['take_profit']:
                         exit_reason = "Take-Profit"
-                    elif days_held >= 10: # Max hold time
+                    elif days_held >= 10:
                         exit_reason = "Max Time"
 
                     if exit_reason:
@@ -839,18 +733,15 @@ class SwingTradeDetector:
                         trades.append(trade)
                         position = None
             except Exception as e:
-                # print(f"Backtest error at index {i}: {e}") # Optional: log errors
                 continue
         if not trades:
             print("No trades generated during backtest period")
             return None
-        # Calculate performance metrics
         profits = [trade['profit_pct'] for trade in trades]
         win_rate = len([p for p in profits if p > 0]) / len(profits) if profits else 0
         avg_profit = np.mean(profits) if profits else 0
         total_return = np.prod([1 + p for p in profits]) - 1 if profits else 0
         num_trades = len(trades)
-        # --- Calculate win rates by exit reason ---
         sl_exits = [t for t in trades if t['exit_reason'] == 'Stop-Loss']
         tp_exits = [t for t in trades if t['exit_reason'] == 'Take-Profit']
         time_exits = [t for t in trades if t['exit_reason'] == 'Max Time']
@@ -882,13 +773,11 @@ class SwingTradeDetector:
         }
 
 class SwingTradingSystem:
-    """Main system controller for swing trading operations"""
     def __init__(self, api_key=None):
         self.api_key = api_key
         self.trainer = None
         self.detector = None
     def train_model(self, data_directory="./historical_data", swing_threshold=0.15, lookforward_periods=10):
-        """Train a new swing trading model"""
         print("Initializing model training...")
         self.trainer = SwingTradeTrainer(
             swing_threshold=swing_threshold,
@@ -904,7 +793,6 @@ class SwingTradingSystem:
             print(f"❌ Error during training: {e}")
             raise
     def initialize_detector(self, model_path="swing_model_enhanced.pkl"):
-        """Initialize the swing trade detector"""
         if self.api_key is None:
             raise ValueError("API key required for real-time detection")
         try:
@@ -915,17 +803,14 @@ class SwingTradingSystem:
             print(f"❌ Error initializing detector: {e}")
             raise
     def analyze_symbol(self, symbol):
-        """Analyze a single symbol"""
         if self.detector is None:
             self.initialize_detector()
         return self.detector.analyze_single_symbol(symbol)
     def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7):
-        """Monitor multiple symbols"""
         if self.detector is None:
             self.initialize_detector()
         self.detector.monitor_multiple_symbols(symbols, check_interval, alert_threshold)
     def run_backtest(self, symbol, days_back=90):
-        """Run backtest on a symbol"""
         if self.detector is None:
             self.initialize_detector()
         return self.detector.backtest_strategy(symbol, days_back)

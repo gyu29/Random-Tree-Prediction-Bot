@@ -1,0 +1,70 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+block_cipher = None
+
+a = Analysis(
+    ['swing_trading_system.py'],
+    pathex=[],
+    binaries=[],
+    datas=[
+        ('swing_model_enhanced.pkl', '.'),
+        ('swing_scaler_enhanced.pkl', '.'),
+        ('feature_columns_enhanced.pkl', '.'),
+        ('training_stats.pkl', '.'),
+    ],
+    hiddenimports=[
+        'sklearn.ensemble',
+        'sklearn.tree',
+        'sklearn.utils._weight_vector',
+        'sklearn.neighbors._partition_nodes',
+        'sklearn.metrics._pairwise_distances_reduction._datasets_pair',
+        'sklearn.metrics._pairwise_distances_reduction._middle_term_computer',
+        'scipy.special._ufuncs_cxx',
+        'scipy.linalg.cython_blas',
+        'scipy.linalg.cython_lapack',
+        'scipy.integrate',
+        'scipy.integrate._ode',
+        'scipy.integrate._quadrature',
+        'scipy.integrate._odepack',
+        'scipy.integrate._quadpack',
+        'scipy.special',
+        'scipy.special._ufuncs',
+        'scipy._lib.messagestream',
+        'pandas._libs.tslibs.timedeltas',
+        'pandas._libs.tslibs.nattype',
+        'pandas._libs.tslibs.np_datetime',
+        'pandas._libs.skiplist',
+    ],
+    hookspath=['./'],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='SwingTradingSystem',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
