@@ -1,3 +1,4 @@
+## windows ##
 pyinstaller --onefile `
     --name SwingTradingSystem `
     --hidden-import sklearn.ensemble `
@@ -13,3 +14,26 @@ pyinstaller --onefile `
     --add-data "feature_columns_enhanced.pkl;." `
     --additional-hooks-dir=. `
     swing_trading_system.py
+
+## macos ##
+pyinstaller --onefile \
+    --name SwingTradingSystem \
+    --hidden-import sklearn.ensemble \
+    --hidden-import sklearn.tree \
+    --hidden-import sklearn.utils._weight_vector \
+    --hidden-import sklearn.neighbors._partition_nodes \
+    --hidden-import scipy.special._ufuncs_cxx \
+    --hidden-import scipy.linalg.cython_blas \
+    --hidden-import scipy.linalg.cython_lapack \
+    --collect-data sklearn \
+    --add-data "swing_model_enhanced.pkl:." \
+    --add-data "swing_scaler_enhanced.pkl:." \
+    --add-data "feature_columns_enhanced.pkl:." \
+    --additional-hooks-dir=. \
+    swing_trading_system.py
+
+# after running
+chmod +x dist/SwingTradingSystem
+
+# running
+./dist/SwingTradingSystem
