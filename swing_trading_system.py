@@ -495,222 +495,6 @@ class SwingTradeDetector:
             print(f"Error fetching Alpha Vantage data for {symbol}: {e}")
             return None
 
-    def fetch_korean_stock(self, symbol):
-        """Fetch Korean stock data from KRX OpenAPI and normalize to OHLCV DataFrame."""
-        try:
-            from datetime import datetime as dt
-
-            # Date range: last ~14 months of data
-            end_date = dt.now()
-            start_date = end_date - pd.DateOffset(months=14)
-
-            end_date_ts = pd.Timestamp(end_date).normalize()
-            start_date_ts = pd.Timestamp(start_date).normalize()
-
-            params = {
-                # Prefer env var for KRX service key so user can supply a key with ETF/ETN access
-                # Fallback to the current embedded key when env var is not set
-                "serviceKey": os.environ.get(
-                    'KRX_SERVICE_KEY',
-                    "dc7ec967be6644b9a1407a2d646c3fea18ebde531bc098fb2a112441fc192e37"
-                ),
-                "resultType": "json",
-                "likeSrtnCd": symbol,  # short code (e.g. 005930, 396500)
-                "beginBasDt": start_date_ts.strftime("%Y%m%d"),
-                "endBasDt": end_date_ts.strftime("%Y%m%d"),
-                "numOfRows": 1000,
-                "pageNo": 1,
-            }
-
-            # KR stock endpoints (stock and securities/funds only)
-            endpoints = [
-                ("https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo", "stock"),
-                ("https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo", "fund/securities"),
-            ]
-
-            print(f"Fetching KRX data for {symbol} from {start_date_ts.strftime('%Y-%m-%d')} to {end_date_ts.strftime('%Y-%m-%d')}")
-            # Masked service key display for debugging (first 6 chars shown)
-            service_key = params.get('serviceKey')
-            if service_key:
-                masked = service_key[:6] + '...' if len(service_key) > 8 else service_key
-                print(f"Using KRX service key: {masked} (set `KRX_SERVICE_KEY` to change)")
-
-            all_items = []
-            
-            # Try stock and securities endpoints
-            for base_url, security_type in endpoints:
-                try:
-                    all_items = []
-                    print(f"Trying {security_type} endpoint...")
-
-                    for page in range(1, 10):  # up to 10 pages
-                        params['pageNo'] = page
-                        response = requests.get(base_url, params=params, timeout=20)
-
-                        if not response.content:
-                            print(f"  Empty response from {security_type} endpoint")
-                            break
-
-                        # Debug: print response text if it's short (likely an error)
-                        if len(response.content) < 500:
-                            print(f"  Response from {security_type}: {response.text[:200]}")
-
-                        try:
-                            data = response.json()
-                        except Exception as json_err:
-                            print(f"  JSON decode error on {security_type}: {json_err}")
-                            print(f"  Response text: {response.text[:200]}")
-                            break
-
-                        # Check for API errors
-                        result_code = data.get("response", {}).get("header", {}).get("resultCode", "")
-                        result_msg = data.get("response", {}).get("header", {}).get("resultMsg", "")
-                        
-                        if result_code != "00":
-                            print(f"  API Error - Code: {result_code}, Message: {result_msg}")
-                            break
-
-                        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-
-                        if not items:
-                            break
-
-                        if isinstance(items, dict):
-                            items = [items]
-
-                        all_items.extend(items)
-
-                        total_count = data.get("response", {}).get("body", {}).get("totalCount", 0)
-                        if len(all_items) >= total_count:
-                            break
-
-                    if all_items:
-                        print(f"✓ Found {symbol} as {security_type} with {len(all_items)} rows")
-                        break
-
-                except Exception as e:
-                    print(f"  Error on {security_type} endpoint: {e}")
-
-            if not all_items:
-                print(f"✗ No KRX data found for {symbol}")
-                return None
-
-            # Normalize into DataFrame
-            df = pd.DataFrame(all_items)
-
-            # Rename fields for consistency
-            rename_map = {
-                "clpr": "close",
-                "mkp": "open",
-                "hipr": "high",
-                "lopr": "low",
-                "trqu": "volume",
-                "basDt": "date"
-            }
-
-            df = df.rename(columns=rename_map)
-
-            # Convert numbers (remove commas from Korean format)
-            for col in ["open", "high", "low", "close", "volume"]:
-                if col in df:
-                    df[col] = df[col].astype(str).str.replace(',', '')
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-
-            # Convert date to index (format: YYYYMMDD)
-            df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
-            df = df.dropna(subset=["date"]).set_index("date").sort_index()
-
-            # Add adj_close column
-            df['adj_close'] = df['close']
-
-            print(f"✓ Successfully fetched {len(df)} rows of KRX data for {symbol} (from {df.index.min().date()} to {df.index.max().date()})")
-
-            return df
-
-        except requests.exceptions.RequestException as e:
-            print(f"Network error fetching KRX data for {symbol}: {e}")
-            return None
-        except Exception as e:
-            print(f"Error parsing KRX data for {symbol}: {e}")
-            return None
-
-    def resolve_company_name(self, symbol, stock_mode="US"):
-        """Resolve a human-friendly company name for a given ticker."""
-        try:
-            if stock_mode == "US":
-                try:
-                    params = {
-                        'function': 'OVERVIEW',
-                        'symbol': symbol,
-                        'apikey': self.api_key
-                    }
-                    r = requests.get(self.base_url, params=params, timeout=15)
-                    r.raise_for_status()
-                    j = r.json()
-                    name = j.get('Name')
-                    if name:
-                        return name
-                except Exception:
-                    try:
-                        params = {
-                            'function': 'SYMBOL_SEARCH',
-                            'keywords': symbol,
-                            'apikey': self.api_key
-                        }
-                        r = requests.get(self.base_url, params=params, timeout=15)
-                        r.raise_for_status()
-                        j = r.json()
-                        best = (j.get('bestMatches') or [])
-                        if best:
-                            for bm in best:
-                                if bm.get('1. symbol', '').upper() == symbol.upper():
-                                    return bm.get('2. name') or symbol
-                            return best[0].get('2. name') or symbol
-                    except Exception:
-                        return symbol
-                return symbol
-            else:
-                # Fetch Korean stock name from API - try stock and securities endpoints
-                endpoints = [
-                    "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
-                    "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo"
-                ]
-                
-                for base_url in endpoints:
-                    try:
-                        params = {
-                            'serviceKey': 'dc7ec967be6644b9a1407a2d646c3fea18ebde531bc098fb2a112441fc192e37',
-                            'resultType': 'json',
-                            'likeSrtnCd': symbol,
-                            'numOfRows': 1,
-                            'pageNo': 1
-                        }
-                        r = requests.get(base_url, params=params, timeout=10)
-                        r.raise_for_status()
-                        data = r.json()
-                        items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
-                        if items:
-                            item = items[0] if isinstance(items, list) else items
-                            name = item.get('itmsNm', symbol)
-                            return name
-                    except Exception:
-                        continue
-                
-                # Fallback to hardcoded map if API fails
-                kr_map = {
-                    '005930': 'Samsung Electronics',
-                    '000660': 'SK hynix',
-                    '035420': 'NAVER',
-                    '035720': 'Kakao',
-                    '068270': 'Celltrion',
-                    '051910': 'LG Chem',
-                    '207940': 'Samsung Biologics'
-                }
-                # Prefer returning a sensible fallback name when API fails
-                return kr_map.get(symbol, symbol)
-        except Exception:
-            return symbol
-
     def _calculate_stop_take_profit(self, entry_price, atr_value, swing_threshold, risk_reward_ratio=0.5):
         """Calculate stop-loss and take-profit levels."""
         tp_amount = max(entry_price * swing_threshold, atr_value * 2)
@@ -807,32 +591,26 @@ class SwingTradeDetector:
             import traceback
             traceback.print_exc()
             return None
-    def analyze_single_symbol(self, symbol, stock_mode="US"):
+    def analyze_single_symbol(self, symbol):
         """Analyze a single symbol for swing trade opportunities"""
         print(f"Analyzing {symbol}...")
-        if stock_mode == "US":
-            df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY")
-        else:
-            df = self.fetch_korean_stock(symbol)
+        df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY")
         if df is None or len(df) < 50:
             print(f"Insufficient data available for {symbol}")
             return None
         result = self.detect_swing_opportunity(df, symbol)
         if result:
-            result['currency'] = 'USD' if stock_mode == 'US' else 'KRW'
             self.print_analysis_result(result)
         return result
     def print_analysis_result(self, result):
         """Print formatted analysis result including stop-loss and take-profit"""
         symbol = result['symbol']
         timestamp = result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-        currency = result.get('currency', 'USD')
-        currency_symbol = '$' if currency == 'USD' else '₩'
         print(f"\n{'='*60}")
         print(f"SWING TRADE ANALYSIS: {symbol}")
         print(f"{'='*60}")
         print(f"Analysis Time: {timestamp}")
-        print(f"Current Price: {currency_symbol}{result['current_price']:.2f} {currency}")
+        print(f"Current Price: ${result['current_price']:.2f}")
         print(f"Price Change (1D): {result['price_change_1d']:.2%}")
         print(f"RSI: {result['rsi']:.1f}")
         print(f"Volume: {result['current_volume']:,}")
@@ -847,14 +625,14 @@ class SwingTradeDetector:
                 print(f"📈 MODERATE BUY SIGNAL")
             else:
                 print(f"⚠️   WEAK BUY SIGNAL")
-            print(f"Recommended Stop-Loss: {currency_symbol}{result['stop_loss']:.2f} {currency}")
-            print(f"Recommended Take-Profit: {currency_symbol}{result['take_profit']:.2f} {currency}")
+            print(f"Recommended Stop-Loss: ${result['stop_loss']:.2f}")
+            print(f"Recommended Take-Profit: ${result['take_profit']:.2f}")
         else:
             print(f"❌ No swing opportunity detected")
             print(f"No-Swing Probability: {result['no_swing_probability']:.1%}")
             print(f"Confidence Level: {result['confidence_level']}")
         print(f"{'='*60}\n")
-    def monitor_multiple_symbols(self, symbols, check_interval=300, alert_threshold=0.7, stock_mode="US"):
+    def monitor_multiple_symbols(self, symbols, check_interval=300, alert_threshold=0.7):
         """Monitor multiple symbols for swing trade opportunities"""
         if isinstance(symbols, str):
             symbols = [symbols]
@@ -870,7 +648,7 @@ class SwingTradeDetector:
                 opportunities = []
                 for symbol in symbols:
                     try:
-                        result = self.analyze_single_symbol(symbol, stock_mode)
+                        result = self.analyze_single_symbol(symbol)
                         if result and result['is_swing_opportunity'] and result['swing_probability'] >= alert_threshold:
                             opportunities.append(result)
                         time.sleep(2)
@@ -880,10 +658,8 @@ class SwingTradeDetector:
                 if opportunities:
                     print(f"\n🔔 FOUND {len(opportunities)} HIGH-PROBABILITY OPPORTUNITIES:")
                     for opp in sorted(opportunities, key=lambda x: x['swing_probability'], reverse=True):
-                        currency = opp.get('currency', 'USD')
-                        sym = '$' if currency == 'USD' else '₩'
-                        print(f"  {opp['symbol']}: {opp['swing_probability']:.1%} at {sym}{opp['current_price']:.2f} {currency}")
-                        print(f"     SL: {sym}{opp['stop_loss']:.2f}, TP: {sym}{opp['take_profit']:.2f}")
+                        print(f"  {opp['symbol']}: {opp['swing_probability']:.1%} at ${opp['current_price']:.2f}")
+                        print(f"     SL: ${opp['stop_loss']:.2f}, TP: ${opp['take_profit']:.2f}")
                 else:
                     print("No high-probability opportunities found in current scan.")
                 print(f"Next scan in {check_interval} seconds...\n")
@@ -892,13 +668,10 @@ class SwingTradeDetector:
             print("\nMonitoring stopped by user.")
         except Exception as e:
             print(f"Error during monitoring: {e}")
-    def backtest_strategy(self, symbol, days_back=90, stock_mode="US"):
+    def backtest_strategy(self, symbol, days_back=90):
         """Simple backtest of the swing trading strategy with stop-loss and take-profit"""
         print(f"Backtesting swing strategy for {symbol} over {days_back} days...")
-        if stock_mode == "US":
-            df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY", outputsize="full")
-        else:
-            df = self.fetch_korean_stock(symbol)
+        df = self.fetch_alpha_vantage_data(symbol, function="TIME_SERIES_DAILY", outputsize="full")
         if df is None or len(df) < days_back:
             print(f"Insufficient data for backtesting {symbol}")
             return None
@@ -1029,18 +802,18 @@ class SwingTradingSystem:
         except Exception as e:
             print(f"❌ Error initializing detector: {e}")
             raise
-    def analyze_symbol(self, symbol, stock_mode="US"):
+    def analyze_symbol(self, symbol):
         if self.detector is None:
             self.initialize_detector()
-        return self.detector.analyze_single_symbol(symbol, stock_mode)
-    def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7, stock_mode="US"):
+        return self.detector.analyze_single_symbol(symbol)
+    def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7):
         if self.detector is None:
             self.initialize_detector()
-        self.detector.monitor_multiple_symbols(symbols, check_interval, alert_threshold, stock_mode)
-    def run_backtest(self, symbol, days_back=90, stock_mode="US"):
+        self.detector.monitor_multiple_symbols(symbols, check_interval, alert_threshold)
+    def run_backtest(self, symbol, days_back=90):
         if self.detector is None:
             self.initialize_detector()
-        return self.detector.backtest_strategy(symbol, days_back, stock_mode)
+        return self.detector.backtest_strategy(symbol, days_back)
 
 if __name__ == "__main__":
     ALPHA_VANTAGE_API_KEY = "WEXRA3OHQYO9I592"
@@ -1048,17 +821,15 @@ if __name__ == "__main__":
     system = SwingTradingSystem(api_key=ALPHA_VANTAGE_API_KEY)
     print("🚀 Advanced Swing Trading ML System")
     print("=" * 50)
-    stock_mode = "US"
     while True:
         print("\nSelect an option:")
-        print("1. Train Model")
-        print("2. Analyze Single Symbol")
-        print("3. Monitor Multiple Symbols")
-        print("4. Backtest Strategy")
-        print("5. Change Stock Region (US/KR)")
-        print("6. Exit")
+        print("1. Train new model")
+        print("2. Analyze single symbol")
+        print("3. Monitor multiple symbols")
+        print("4. Run backtest")
+        print("5. Exit")
         try:
-            choice = input("\nEnter your choice (1-6): ").strip()
+            choice = input("\nEnter your choice (1-5): ").strip()
             if choice == "1":
                 print("\n🧠 Training new model...")
                 try:
@@ -1076,16 +847,7 @@ if __name__ == "__main__":
                 symbol = input("Enter symbol (e.g., AAPL): ").strip().upper()
                 if symbol:
                     try:
-                        # Show company name for confirmation
-                        if system.detector is None:
-                            try:
-                                system.initialize_detector()
-                            except Exception:
-                                pass
-                        if system.detector is not None:
-                            company = system.detector.resolve_company_name(symbol, stock_mode)
-                            print(f"Selected: {symbol} - {company}")
-                        result = system.analyze_symbol(symbol, stock_mode)
+                        result = system.analyze_symbol(symbol)
                         if not result:
                             print(f"Could not analyze {symbol}")
                     except Exception as e:
@@ -1098,7 +860,7 @@ if __name__ == "__main__":
                     try:
                         interval = int(input("Check interval in seconds (default 300): ") or "300")
                         threshold = float(input("Alert threshold (default 0.7): ") or "0.7")
-                        system.monitor_symbols(symbols, interval, threshold, stock_mode)
+                        system.monitor_symbols(symbols, interval, threshold)
                     except Exception as e:
                         print(f"Monitoring failed: {e}")
             elif choice == "4":
@@ -1107,25 +869,16 @@ if __name__ == "__main__":
                 if symbol:
                     try:
                         days = int(input("Days to backtest (default 90): ") or "90")
-                        result = system.run_backtest(symbol, days, stock_mode)
+                        result = system.run_backtest(symbol, days)
                         if not result:
                             print(f"Could not backtest {symbol}")
                     except Exception as e:
                         print(f"Backtest failed: {e}")
             elif choice == "5":
-                if stock_mode == "US":
-                    stock_mode = "KR"
-                    print("\nStock mode changed to Korean Market")
-                    print("Note: Korean market (KR) uses data.go.kr (KRX OpenAPI) for stocks and securities.")
-                    print("You can set a custom service key with: export KRX_SERVICE_KEY=your_key_here")
-                else:
-                    stock_mode = "US"
-                    print("\nStock mode changed to US Market")
-            elif choice == "6":
                 print("\nGoodbye!")
                 break
             else:
-                print("Invalid choice. Please enter 1-6.")
+                print("Invalid choice. Please enter 1-5.")
         except KeyboardInterrupt:
             print("\nOperation cancelled by user.")
         except Exception as e:
