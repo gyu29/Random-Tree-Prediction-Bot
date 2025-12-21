@@ -515,12 +515,23 @@ class SwingTradeDetector:
                     "dc7ec967be6644b9a1407a2d646c3fea18ebde531bc098fb2a112441fc192e37"
                 ),
                 "resultType": "json",
-                "likeSrtnCd": symbol,  # short code (e.g. 005930, 396500)
+                # We'll set identifier filters below based on input type (code vs name)
                 "beginBasDt": start_date_ts.strftime("%Y%m%d"),
                 "endBasDt": end_date_ts.strftime("%Y%m%d"),
                 "numOfRows": 1000,
                 "pageNo": 1,
             }
+
+            # Identifier strategy: if `symbol` looks like a KRX short code (digits), use likeSrtnCd.
+            # If it looks like an ISIN (starts with KR), use likeIsinCd.
+            # Otherwise, treat it as a name and use likeItmsNm to match ETFs by name.
+            sym = (symbol or '').strip()
+            if sym.startswith('KR') and len(sym) >= 10:
+                params["likeIsinCd"] = sym
+            elif sym.isdigit():
+                params["likeSrtnCd"] = sym
+            else:
+                params["likeItmsNm"] = sym
 
             # KR stock endpoints (stock and securities/funds only)
             endpoints = [
