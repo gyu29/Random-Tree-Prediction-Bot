@@ -359,7 +359,18 @@ class SwingTradeDetector:
                  features_path="feature_columns_enhanced.pkl"):
         self.api_key = api_key
         self.base_url = "https://www.alphavantage.co/query?"
+        self._last_alpha_vantage_request_ts = 0.0
         self.load_model(model_path, scaler_path, features_path)
+    def _alpha_vantage_get(self, params, timeout=30):
+        """Space requests out so free-tier Alpha Vantage calls don't trip burst limits."""
+        min_interval_seconds = 1.2
+        elapsed = time.time() - self._last_alpha_vantage_request_ts
+        if elapsed < min_interval_seconds:
+            time.sleep(min_interval_seconds - elapsed)
+        response = requests.get(self.base_url, params=params, timeout=timeout)
+        self._last_alpha_vantage_request_ts = time.time()
+        response.raise_for_status()
+        return response
     def load_model(self, model_path, scaler_path, features_path):
         try:
             self.model = joblib.load(resource_path(model_path))
@@ -398,8 +409,7 @@ class SwingTradeDetector:
                     'interval': interval,
                     'apikey': self.api_key
                 }
-                response = requests.get(self.base_url, params=params, timeout=30)
-                response.raise_for_status()
+                response = self._alpha_vantage_get(params, timeout=30)
                 data = response.json()
                 if "Error Message" in data:
                     raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
@@ -438,8 +448,7 @@ class SwingTradeDetector:
                     'outputsize': outputsize,
                     'apikey': self.api_key
                 }
-                response = requests.get(self.base_url, params=params, timeout=30)
-                response.raise_for_status()
+                response = self._alpha_vantage_get(params, timeout=30)
                 data = response.json()
                 if "Error Message" in data:
                     raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
@@ -655,8 +664,7 @@ class SwingTradeDetector:
                         'symbol': symbol,
                         'apikey': self.api_key
                     }
-                    r = requests.get(self.base_url, params=params, timeout=15)
-                    r.raise_for_status()
+                    r = self._alpha_vantage_get(params, timeout=15)
                     j = r.json()
                     name = j.get('Name')
                     if name:
@@ -668,8 +676,7 @@ class SwingTradeDetector:
                             'keywords': symbol,
                             'apikey': self.api_key
                         }
-                        r = requests.get(self.base_url, params=params, timeout=15)
-                        r.raise_for_status()
+                        r = self._alpha_vantage_get(params, timeout=15)
                         j = r.json()
                         best = (j.get('bestMatches') or [])
                         if best:
@@ -1054,7 +1061,7 @@ class SwingTradingSystem:
         return self.detector.backtest_strategy(symbol, days_back, stock_mode)
 
 if __name__ == "__main__":
-    ALPHA_VANTAGE_API_KEY = "WEXRA3OHQYO9I592"
+    ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
     DATA_DIRECTORY = "./historical_data"
     system = SwingTradingSystem(api_key=ALPHA_VANTAGE_API_KEY)
     print("🚀 Advanced Swing Trading ML System")
