@@ -2,12 +2,116 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, Activity, BarChart2, Settings, Upload, Play, AlertCircle, CheckCircle, Clock, DollarSign, Target, Shield, Download, Save } from 'lucide-react';
 
+const MAX_SYMBOL_LENGTH = 15;
+const MAX_WATCHLIST_ITEMS = 25;
+const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
+
+const sanitizeNumber = (value, fallback, min, max) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+};
+
+const sanitizeBoolean = (value, fallback = false) => (
+  typeof value === 'boolean' ? value : fallback
+);
+
+const sanitizeText = (value, fallback = '') => {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : fallback;
+};
+
+const sanitizeSymbol = (value) => {
+  const normalized = sanitizeText(value).toUpperCase().slice(0, MAX_SYMBOL_LENGTH);
+  return SYMBOL_PATTERN.test(normalized) ? normalized : null;
+};
+
+const sanitizeWatchlist = (value) => {
+  if (!Array.isArray(value)) return null;
+  const sanitized = [];
+  const seen = new Set();
+  for (const item of value.slice(0, MAX_WATCHLIST_ITEMS)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const symbol = sanitizeSymbol(item.symbol);
+    if (!symbol || seen.has(symbol)) continue;
+    seen.add(symbol);
+    sanitized.push({
+      symbol,
+      price: sanitizeNumber(item.price, 0, 0, 10000000),
+      change: sanitizeNumber(item.change, 0, -1, 1),
+      probability: sanitizeNumber(item.probability, 0, 0, 1),
+      signal: ['BUY', 'HOLD', 'SELL'].includes(item.signal) ? item.signal : 'HOLD',
+      stopLoss: sanitizeNumber(item.stopLoss, 0, 0, 10000000),
+      takeProfit: sanitizeNumber(item.takeProfit, 0, 0, 10000000)
+    });
+  }
+  return sanitized;
+};
+
+const sanitizeAlerts = (value) => {
+  if (!Array.isArray(value)) return null;
+  return value.slice(0, 50).flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const symbol = sanitizeSymbol(item.symbol);
+    const message = sanitizeText(item.message).slice(0, 200);
+    const time = sanitizeText(item.time).slice(0, 40);
+    if (!symbol || !message || !time) return [];
+    return [{
+      symbol,
+      message,
+      confidence: sanitizeNumber(item.confidence, 0, 0, 1),
+      time
+    }];
+  });
+};
+
+const sanitizeStoredConfig = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  const modelStatus = value.modelStatus && typeof value.modelStatus === 'object' ? {
+    trained: sanitizeBoolean(value.modelStatus.trained, true),
+    lastTraining: sanitizeText(value.modelStatus.lastTraining, '2025-10-01').slice(0, 10),
+    features: sanitizeNumber(value.modelStatus.features, 127, 1, 10000),
+    accuracy: sanitizeNumber(value.modelStatus.accuracy, 0.8547, 0, 1)
+  } : undefined;
+
+  const trainingConfig = value.trainingConfig && typeof value.trainingConfig === 'object' ? {
+    lookforwardPeriods: sanitizeNumber(value.trainingConfig.lookforwardPeriods, 10, 2, 90),
+    swingThreshold: sanitizeNumber(value.trainingConfig.swingThreshold, 0.15, 0.01, 1),
+    estimators: sanitizeNumber(value.trainingConfig.estimators, 100, 10, 1000),
+    maxDepth: sanitizeNumber(value.trainingConfig.maxDepth, 8, 1, 100)
+  } : undefined;
+
+  const riskSettings = value.riskSettings && typeof value.riskSettings === 'object' ? {
+    riskRewardRatio: sanitizeNumber(value.riskSettings.riskRewardRatio, 0.5, 0.1, 10),
+    minStopLoss: sanitizeNumber(value.riskSettings.minStopLoss, 0.01, 0.001, 0.5),
+    atrMultiplier: sanitizeNumber(value.riskSettings.atrMultiplier, 2.0, 0.1, 10)
+  } : undefined;
+
+  const notificationSettings = value.notificationSettings && typeof value.notificationSettings === 'object' ? {
+    emailAlerts: sanitizeBoolean(value.notificationSettings.emailAlerts, true),
+    desktopAlerts: sanitizeBoolean(value.notificationSettings.desktopAlerts, true)
+  } : undefined;
+
+  return {
+    ...(modelStatus ? { modelStatus } : {}),
+    ...(trainingConfig ? { trainingConfig } : {}),
+    ...(sanitizeWatchlist(value.watchlist) ? { watchlist: sanitizeWatchlist(value.watchlist) } : {}),
+    ...(sanitizeAlerts(value.activeSignals) ? { activeSignals: sanitizeAlerts(value.activeSignals) } : {}),
+    ...(riskSettings ? { riskSettings } : {}),
+    ...(notificationSettings ? { notificationSettings } : {}),
+    ...(typeof value.autoRetrainEnabled === 'boolean' ? { autoRetrainEnabled: value.autoRetrainEnabled } : {})
+  };
+};
+
 const SwingTradingDashboard = () => {
   // Load initial data from storage or use defaults
   const loadFromStorage = () => {
     try {
       const stored = JSON.parse(window.localStorage?.getItem('swingTradingConfig') || '{}');
-      return stored;
+      // Drop unexpected fields and coerce all persisted values through a strict client-side schema.
+      return sanitizeStoredConfig(stored);
     } catch {
       return {};
     }
@@ -17,6 +121,7 @@ const SwingTradingDashboard = () => {
 
   // State management
   const [activeTab, setActiveTab] = useState('dashboard');
+  // Keep the API key only in transient component state so it never lands in localStorage/exported config.
   const [apiKey, setApiKey] = useState('');
   
   const [modelStatus, setModelStatus] = useState(initialConfig.modelStatus || {
@@ -67,6 +172,7 @@ const SwingTradingDashboard = () => {
   
   const [uploadedFile, setUploadedFile] = useState(null);
   const [showSaveNotification, setShowSaveNotification] = useState(false);
+  const [apiKeyMessage, setApiKeyMessage] = useState('');
 
   // Save configuration to JSON structure
   const saveConfiguration = () => {
@@ -170,7 +276,8 @@ const SwingTradingDashboard = () => {
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
-      setUploadedFile(file.name);
+      const safeFileName = sanitizeText(file.name, '').slice(0, 255);
+      setUploadedFile(safeFileName || null);
     }
   };
 
@@ -189,9 +296,13 @@ const SwingTradingDashboard = () => {
   // Add symbol to watchlist
   const addToWatchlist = () => {
     const symbol = prompt('Enter symbol to add (e.g., AAPL):');
-    if (symbol && symbol.trim()) {
+    const validatedSymbol = sanitizeSymbol(symbol);
+    if (validatedSymbol) {
+      if (watchlist.some((item) => item.symbol === validatedSymbol)) {
+        return;
+      }
       const newItem = {
-        symbol: symbol.trim().toUpperCase(),
+        symbol: validatedSymbol,
         price: 0,
         change: 0,
         probability: 0,
@@ -201,6 +312,25 @@ const SwingTradingDashboard = () => {
       };
       setWatchlist([...watchlist, newItem]);
     }
+  };
+
+  const handleApiKeySave = () => {
+    const trimmedKey = sanitizeText(apiKey, '');
+    if (!trimmedKey) {
+      setApiKeyMessage('Enter an API key, then store it server-side in ALPHA_VANTAGE_API_KEY.');
+      return;
+    }
+    setApiKey('');
+    setApiKeyMessage('API key was intentionally not stored in the client. Set ALPHA_VANTAGE_API_KEY in the runtime environment instead.');
+  };
+
+  const handleSymbolSelectionChange = (value) => {
+    const symbols = value
+      .split(',')
+      .map((item) => sanitizeSymbol(item))
+      .filter(Boolean)
+      .slice(0, MAX_WATCHLIST_ITEMS);
+    setSelectedSymbols(symbols.length ? symbols : ['AAPL']);
   };
 
   // Remove symbol from watchlist
@@ -398,7 +528,7 @@ const SwingTradingDashboard = () => {
             <input
               type="number"
               value={trainingConfig.lookforwardPeriods}
-              onChange={(e) => setTrainingConfig({...trainingConfig, lookforwardPeriods: parseInt(e.target.value)})}
+              onChange={(e) => setTrainingConfig({...trainingConfig, lookforwardPeriods: sanitizeNumber(e.target.value, trainingConfig.lookforwardPeriods, 2, 90)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -408,7 +538,7 @@ const SwingTradingDashboard = () => {
               type="number"
               step="0.01"
               value={trainingConfig.swingThreshold}
-              onChange={(e) => setTrainingConfig({...trainingConfig, swingThreshold: parseFloat(e.target.value)})}
+              onChange={(e) => setTrainingConfig({...trainingConfig, swingThreshold: sanitizeNumber(e.target.value, trainingConfig.swingThreshold, 0.01, 1)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -417,7 +547,7 @@ const SwingTradingDashboard = () => {
             <input
               type="number"
               value={trainingConfig.estimators}
-              onChange={(e) => setTrainingConfig({...trainingConfig, estimators: parseInt(e.target.value)})}
+              onChange={(e) => setTrainingConfig({...trainingConfig, estimators: sanitizeNumber(e.target.value, trainingConfig.estimators, 10, 1000)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -426,7 +556,7 @@ const SwingTradingDashboard = () => {
             <input
               type="number"
               value={trainingConfig.maxDepth}
-              onChange={(e) => setTrainingConfig({...trainingConfig, maxDepth: parseInt(e.target.value)})}
+              onChange={(e) => setTrainingConfig({...trainingConfig, maxDepth: sanitizeNumber(e.target.value, trainingConfig.maxDepth, 1, 100)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -494,7 +624,7 @@ const SwingTradingDashboard = () => {
             <input
               type="text"
               value={selectedSymbols.join(', ')}
-              onChange={(e) => setSelectedSymbols(e.target.value.split(',').map(s => s.trim()))}
+              onChange={(e) => handleSymbolSelectionChange(e.target.value)}
               placeholder="AAPL, MSFT, GOOGL"
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
@@ -755,13 +885,16 @@ const SwingTradingDashboard = () => {
               placeholder="Enter your API key"
             />
             <button
-              onClick={() => alert('API key saved to .env file')}
+              onClick={handleApiKeySave}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
             >
               Save
             </button>
           </div>
-          <p className="text-xs text-gray-500 mt-2">⚠️ API key will be stored in .env file (not in JSON config)</p>
+          <p className="text-xs text-gray-500 mt-2">Client-side storage is disabled for secrets. Set `ALPHA_VANTAGE_API_KEY` in the app runtime environment instead.</p>
+          {apiKeyMessage && (
+            <p className="text-xs text-emerald-400 mt-2">{apiKeyMessage}</p>
+          )}
         </div>
       </div>
 
@@ -778,7 +911,7 @@ const SwingTradingDashboard = () => {
               type="number"
               step="0.1"
               value={riskSettings.riskRewardRatio}
-              onChange={(e) => setRiskSettings({...riskSettings, riskRewardRatio: parseFloat(e.target.value)})}
+              onChange={(e) => setRiskSettings({...riskSettings, riskRewardRatio: sanitizeNumber(e.target.value, riskSettings.riskRewardRatio, 0.1, 10)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -788,7 +921,7 @@ const SwingTradingDashboard = () => {
               type="number"
               step="0.01"
               value={riskSettings.minStopLoss}
-              onChange={(e) => setRiskSettings({...riskSettings, minStopLoss: parseFloat(e.target.value)})}
+              onChange={(e) => setRiskSettings({...riskSettings, minStopLoss: sanitizeNumber(e.target.value, riskSettings.minStopLoss, 0.001, 0.5)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
@@ -798,7 +931,7 @@ const SwingTradingDashboard = () => {
               type="number"
               step="0.1"
               value={riskSettings.atrMultiplier}
-              onChange={(e) => setRiskSettings({...riskSettings, atrMultiplier: parseFloat(e.target.value)})}
+              onChange={(e) => setRiskSettings({...riskSettings, atrMultiplier: sanitizeNumber(e.target.value, riskSettings.atrMultiplier, 0.1, 10)})}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
             />
           </div>

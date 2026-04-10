@@ -12,8 +12,216 @@ import requests
 import time
 import warnings
 from datetime import datetime, timedelta
+from collections import defaultdict, deque
+from dataclasses import dataclass
+import re
 import sys
 warnings.filterwarnings('ignore')
+
+
+class SecurityValidationError(ValueError):
+    """Raised when user-provided input fails strict schema validation."""
+
+
+class RateLimitExceededError(Exception):
+    """Raised when a caller exceeds the configured public operation limit."""
+
+    def __init__(self, message, retry_after_seconds):
+        super().__init__(message)
+        self.status_code = 429
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
+
+    def to_response(self):
+        return {
+            "status": 429,
+            "error": "Too Many Requests",
+            "message": str(self),
+            "retry_after_seconds": self.retry_after_seconds,
+        }
+
+
+@dataclass(frozen=True)
+class SecurityConfig:
+    """Centralized security defaults for public-facing operations."""
+
+    max_symbol_length: int = 15
+    max_symbol_list_size: int = 25
+    max_username_length: int = 128
+    max_ip_length: int = 64
+    max_path_length: int = 260
+    analysis_limit_per_minute: int = 30
+    analysis_limit_per_user_minute: int = 15
+    monitor_limit_per_minute: int = 10
+    monitor_limit_per_user_minute: int = 5
+    training_limit_per_hour: int = 5
+    training_limit_per_user_hour: int = 3
+    backtest_limit_per_minute: int = 12
+    backtest_limit_per_user_minute: int = 8
+
+
+class RequestRateLimiter:
+    """Simple in-memory rate limiter keyed by operation + actor scope."""
+
+    def __init__(self):
+        self._events = defaultdict(deque)
+
+    def _enforce_bucket(self, bucket_key, limit, window_seconds, message):
+        now = time.time()
+        window = self._events[bucket_key]
+        while window and now - window[0] >= window_seconds:
+            window.popleft()
+        if len(window) >= limit:
+            retry_after = max(1, window_seconds - (now - window[0]))
+            raise RateLimitExceededError(message, retry_after)
+        window.append(now)
+
+    def enforce(self, operation, ip_address, username, ip_limit, user_limit, window_seconds=60):
+        self._enforce_bucket(
+            (operation, "ip", ip_address),
+            ip_limit,
+            window_seconds,
+            f"Too many {operation} requests from this IP address. Please try again later.",
+        )
+        self._enforce_bucket(
+            (operation, "user", username),
+            user_limit,
+            window_seconds,
+            f"Too many {operation} requests for this user. Please try again later.",
+        )
+
+
+class SecurityValidator:
+    """Schema-style validators and sanitizers for all user-controlled input."""
+
+    US_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
+    KR_SYMBOL_PATTERN = re.compile(r"^(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9가-힣 .&()/_-]{1,30})$")
+
+    @staticmethod
+    def validate_no_unexpected_fields(payload, allowed_fields, field_name):
+        if not isinstance(payload, dict):
+            raise SecurityValidationError(f"{field_name} must be an object")
+        unexpected = sorted(set(payload.keys()) - set(allowed_fields))
+        if unexpected:
+            raise SecurityValidationError(f"Unexpected fields in {field_name}: {unexpected}")
+        return payload
+
+    @staticmethod
+    def sanitize_text(value, field_name, max_length):
+        if not isinstance(value, str):
+            raise SecurityValidationError(f"{field_name} must be a string")
+        sanitized = value.strip()
+        if not sanitized:
+            raise SecurityValidationError(f"{field_name} is required")
+        if len(sanitized) > max_length:
+            raise SecurityValidationError(f"{field_name} exceeds maximum length of {max_length}")
+        if any(ord(char) < 32 for char in sanitized):
+            raise SecurityValidationError(f"{field_name} contains unsupported control characters")
+        return sanitized
+
+    @classmethod
+    def validate_symbol(cls, symbol, stock_mode, security_config):
+        cleaned = cls.sanitize_text(symbol, "symbol", security_config.max_symbol_length if stock_mode == "US" else 30)
+        normalized = cleaned.upper() if stock_mode == "US" or cleaned.isascii() else cleaned
+        pattern = cls.US_SYMBOL_PATTERN if stock_mode == "US" else cls.KR_SYMBOL_PATTERN
+        if not pattern.fullmatch(normalized):
+            raise SecurityValidationError(f"Invalid {stock_mode} symbol format: {symbol}")
+        return normalized
+
+    @classmethod
+    def validate_symbol_list(cls, symbols, stock_mode, security_config):
+        if not isinstance(symbols, list):
+            raise SecurityValidationError("symbols must be a list")
+        if not symbols:
+            raise SecurityValidationError("At least one symbol is required")
+        if len(symbols) > security_config.max_symbol_list_size:
+            raise SecurityValidationError(
+                f"symbols exceeds maximum size of {security_config.max_symbol_list_size}"
+            )
+        normalized = []
+        seen = set()
+        for symbol in symbols:
+            validated = cls.validate_symbol(symbol, stock_mode, security_config)
+            if validated not in seen:
+                normalized.append(validated)
+                seen.add(validated)
+        return normalized
+
+    @staticmethod
+    def validate_choice(value, field_name, allowed_values):
+        if value not in allowed_values:
+            raise SecurityValidationError(f"{field_name} must be one of {sorted(allowed_values)}")
+        return value
+
+    @staticmethod
+    def validate_float(value, field_name, minimum, maximum):
+        if isinstance(value, bool):
+            raise SecurityValidationError(f"{field_name} must be a number")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            raise SecurityValidationError(f"{field_name} must be a number")
+        if not np.isfinite(numeric):
+            raise SecurityValidationError(f"{field_name} must be finite")
+        if numeric < minimum or numeric > maximum:
+            raise SecurityValidationError(
+                f"{field_name} must be between {minimum} and {maximum}"
+            )
+        return numeric
+
+    @staticmethod
+    def validate_int(value, field_name, minimum, maximum):
+        if isinstance(value, bool):
+            raise SecurityValidationError(f"{field_name} must be an integer")
+        try:
+            numeric = int(value)
+        except (TypeError, ValueError):
+            raise SecurityValidationError(f"{field_name} must be an integer")
+        if numeric < minimum or numeric > maximum:
+            raise SecurityValidationError(
+                f"{field_name} must be between {minimum} and {maximum}"
+            )
+        return numeric
+
+    @staticmethod
+    def validate_data_directory(path_value, security_config):
+        path_text = SecurityValidator.sanitize_text(path_value, "data_directory", security_config.max_path_length)
+        normalized_path = os.path.abspath(path_text)
+        if not os.path.isdir(normalized_path):
+            raise SecurityValidationError(f"data_directory does not exist: {path_text}")
+        return normalized_path
+
+    @staticmethod
+    def validate_request_context(context, security_config):
+        if context is None:
+            context = {}
+        SecurityValidator.validate_no_unexpected_fields(
+            context,
+            {"ip_address", "username"},
+            "request_context",
+        )
+        ip_address = context.get("ip_address", "127.0.0.1")
+        username = context.get("username") or os.environ.get("USER") or os.environ.get("USERNAME") or "local-user"
+        ip_address = SecurityValidator.sanitize_text(ip_address, "ip_address", security_config.max_ip_length)
+        username = SecurityValidator.sanitize_text(username, "username", security_config.max_username_length)
+        return {"ip_address": ip_address, "username": username}
+
+
+class SecretManager:
+    """Load secrets from the environment without hardcoded fallbacks."""
+
+    @staticmethod
+    def get_required_secret(env_var_name):
+        secret = os.environ.get(env_var_name, "").strip()
+        if not secret:
+            raise SecurityValidationError(
+                f"Missing required secret: {env_var_name}. Set it as an environment variable before running this operation."
+            )
+        return secret
+
+    @staticmethod
+    def get_optional_secret(env_var_name):
+        secret = os.environ.get(env_var_name, "").strip()
+        return secret or None
 
 def resource_path(relative_path):
     try:
@@ -357,9 +565,11 @@ class SwingTradeDetector:
     def __init__(self, api_key, model_path="swing_model_enhanced.pkl", 
                  scaler_path="swing_scaler_enhanced.pkl", 
                  features_path="feature_columns_enhanced.pkl"):
-        self.api_key = api_key
+        self.security_config = SecurityConfig()
+        self.api_key = SecurityValidator.sanitize_text(api_key, "ALPHA_VANTAGE_API_KEY", 128)
         self.base_url = "https://www.alphavantage.co/query?"
         self._last_alpha_vantage_request_ts = 0.0
+        self.krx_service_key = SecretManager.get_optional_secret("KRX_SERVICE_KEY")
         self.load_model(model_path, scaler_path, features_path)
     def _alpha_vantage_get(self, params, timeout=30):
         """Space requests out so free-tier Alpha Vantage calls don't trip burst limits."""
@@ -517,12 +727,8 @@ class SwingTradeDetector:
             start_date_ts = pd.Timestamp(start_date).normalize()
 
             params = {
-                # Prefer env var for KRX service key so user can supply a key with ETF/ETN access
-                # Fallback to the current embedded key when env var is not set
-                "serviceKey": os.environ.get(
-                    'KRX_SERVICE_KEY',
-                    "dc7ec967be6644b9a1407a2d646c3fea18ebde531bc098fb2a112441fc192e37"
-                ),
+                # OWASP guidance: never ship embedded API secrets. Read them from the environment at runtime.
+                "serviceKey": self.krx_service_key,
                 "resultType": "json",
                 # We'll set identifier filters below based on input type (code vs name)
                 "beginBasDt": start_date_ts.strftime("%Y%m%d"),
@@ -541,6 +747,11 @@ class SwingTradeDetector:
                 params["likeSrtnCd"] = sym
             else:
                 params["likeItmsNm"] = sym
+
+            if not params["serviceKey"]:
+                raise SecurityValidationError(
+                    "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
+                )
 
             # KR stock endpoints (stock and securities/funds only)
             endpoints = [
@@ -696,8 +907,13 @@ class SwingTradeDetector:
                 
                 for base_url in endpoints:
                     try:
+                        service_key = self.krx_service_key
+                        if not service_key:
+                            raise SecurityValidationError(
+                                "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
+                            )
                         params = {
-                            'serviceKey': 'dc7ec967be6644b9a1407a2d646c3fea18ebde531bc098fb2a112441fc192e37',
+                            'serviceKey': service_key,
                             'resultType': 'json',
                             'likeSrtnCd': symbol,
                             'numOfRows': 1,
@@ -1022,14 +1238,51 @@ class SwingTradingSystem:
         self.api_key = api_key
         self.trainer = None
         self.detector = None
-    def train_model(self, data_directory="./historical_data", swing_threshold=0.15, lookforward_periods=10):
+        self.security_config = SecurityConfig()
+        self.rate_limiter = RequestRateLimiter()
+
+    def _enforce_public_rate_limit(self, operation, request_context, ip_limit, user_limit, window_seconds):
+        context = SecurityValidator.validate_request_context(request_context, self.security_config)
+        self.rate_limiter.enforce(
+            operation=operation,
+            ip_address=context["ip_address"],
+            username=context["username"],
+            ip_limit=ip_limit,
+            user_limit=user_limit,
+            window_seconds=window_seconds,
+        )
+        return context
+
+    def _handle_security_error(self, error):
+        if isinstance(error, RateLimitExceededError):
+            payload = error.to_response()
+            print(f"HTTP {payload['status']} {payload['error']}: {payload['message']}")
+            print(f"Retry after: {payload['retry_after_seconds']} seconds")
+            return payload
+        print(f"Input validation error: {error}")
+        return None
+
+    def train_model(self, data_directory="./historical_data", swing_threshold=0.15, lookforward_periods=10, request_context=None):
         print("Initializing model training...")
+        try:
+            self._enforce_public_rate_limit(
+                operation="train_model",
+                request_context=request_context,
+                ip_limit=self.security_config.training_limit_per_hour,
+                user_limit=self.security_config.training_limit_per_user_hour,
+                window_seconds=3600,
+            )
+            validated_data_directory = SecurityValidator.validate_data_directory(data_directory, self.security_config)
+            validated_threshold = SecurityValidator.validate_float(swing_threshold, "swing_threshold", 0.01, 1.0)
+            validated_lookforward = SecurityValidator.validate_int(lookforward_periods, "lookforward_periods", 2, 90)
+        except (SecurityValidationError, RateLimitExceededError) as error:
+            return self._handle_security_error(error)
         self.trainer = SwingTradeTrainer(
-            swing_threshold=swing_threshold,
-            lookforward_periods=lookforward_periods
+            swing_threshold=validated_threshold,
+            lookforward_periods=validated_lookforward
         )
         try:
-            test_score = self.trainer.train(data_directory)
+            test_score = self.trainer.train(validated_data_directory)
             self.trainer.save_model()
             print(f"\n✅ Model training completed successfully!")
             print(f"Final test score: {test_score:.4f}")
@@ -1047,21 +1300,62 @@ class SwingTradingSystem:
         except Exception as e:
             print(f"❌ Error initializing detector: {e}")
             raise
-    def analyze_symbol(self, symbol, stock_mode="US"):
+    def analyze_symbol(self, symbol, stock_mode="US", request_context=None):
+        try:
+            self._enforce_public_rate_limit(
+                operation="analyze_symbol",
+                request_context=request_context,
+                ip_limit=self.security_config.analysis_limit_per_minute,
+                user_limit=self.security_config.analysis_limit_per_user_minute,
+                window_seconds=60,
+            )
+            validated_mode = SecurityValidator.validate_choice(stock_mode, "stock_mode", {"US", "KR"})
+            validated_symbol = SecurityValidator.validate_symbol(symbol, validated_mode, self.security_config)
+        except (SecurityValidationError, RateLimitExceededError) as error:
+            return self._handle_security_error(error)
         if self.detector is None:
             self.initialize_detector()
-        return self.detector.analyze_single_symbol(symbol, stock_mode)
-    def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7, stock_mode="US"):
+        return self.detector.analyze_single_symbol(validated_symbol, validated_mode)
+
+    def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7, stock_mode="US", request_context=None):
+        try:
+            self._enforce_public_rate_limit(
+                operation="monitor_symbols",
+                request_context=request_context,
+                ip_limit=self.security_config.monitor_limit_per_minute,
+                user_limit=self.security_config.monitor_limit_per_user_minute,
+                window_seconds=60,
+            )
+            validated_mode = SecurityValidator.validate_choice(stock_mode, "stock_mode", {"US", "KR"})
+            validated_symbols = SecurityValidator.validate_symbol_list(symbols, validated_mode, self.security_config)
+            validated_interval = SecurityValidator.validate_int(check_interval, "check_interval", 30, 86400)
+            validated_threshold = SecurityValidator.validate_float(alert_threshold, "alert_threshold", 0.0, 1.0)
+        except (SecurityValidationError, RateLimitExceededError) as error:
+            return self._handle_security_error(error)
         if self.detector is None:
             self.initialize_detector()
-        self.detector.monitor_multiple_symbols(symbols, check_interval, alert_threshold, stock_mode)
-    def run_backtest(self, symbol, days_back=90, stock_mode="US"):
+        self.detector.monitor_multiple_symbols(validated_symbols, validated_interval, validated_threshold, validated_mode)
+
+    def run_backtest(self, symbol, days_back=90, stock_mode="US", request_context=None):
+        try:
+            self._enforce_public_rate_limit(
+                operation="run_backtest",
+                request_context=request_context,
+                ip_limit=self.security_config.backtest_limit_per_minute,
+                user_limit=self.security_config.backtest_limit_per_user_minute,
+                window_seconds=60,
+            )
+            validated_mode = SecurityValidator.validate_choice(stock_mode, "stock_mode", {"US", "KR"})
+            validated_symbol = SecurityValidator.validate_symbol(symbol, validated_mode, self.security_config)
+            validated_days = SecurityValidator.validate_int(days_back, "days_back", 30, 3650)
+        except (SecurityValidationError, RateLimitExceededError) as error:
+            return self._handle_security_error(error)
         if self.detector is None:
             self.initialize_detector()
-        return self.detector.backtest_strategy(symbol, days_back, stock_mode)
+        return self.detector.backtest_strategy(validated_symbol, validated_days, validated_mode)
 
 if __name__ == "__main__":
-    ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+    ALPHA_VANTAGE_API_KEY = SecretManager.get_optional_secret("ALPHA_VANTAGE_API_KEY")
     DATA_DIRECTORY = "./historical_data"
     system = SwingTradingSystem(api_key=ALPHA_VANTAGE_API_KEY)
     print("🚀 Advanced Swing Trading ML System")
@@ -1091,7 +1385,7 @@ if __name__ == "__main__":
                     print(f"Training failed: {e}")
             elif choice == "2":
                 print("\n🧠 Single Symbol Analysis")
-                symbol = input("Enter symbol (e.g., AAPL): ").strip().upper()
+                symbol = input("Enter symbol (e.g., AAPL): ").strip()
                 if symbol:
                     try:
                         # Show company name for confirmation
@@ -1112,7 +1406,7 @@ if __name__ == "__main__":
                 print("\n🧠 Multi-Symbol Monitoring")
                 symbols_input = input("Enter symbols separated by commas (e.g., AAPL,MSFT,GOOGL): ").strip()
                 if symbols_input:
-                    symbols = [s.strip().upper() for s in symbols_input.split(",")]
+                    symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
                     try:
                         interval = int(input("Check interval in seconds (default 300): ") or "300")
                         threshold = float(input("Alert threshold (default 0.7): ") or "0.7")
@@ -1121,7 +1415,7 @@ if __name__ == "__main__":
                         print(f"Monitoring failed: {e}")
             elif choice == "4":
                 print("\nStrategy Backtest")
-                symbol = input("Enter symbol for backtest (e.g., AAPL): ").strip().upper()
+                symbol = input("Enter symbol for backtest (e.g., AAPL): ").strip()
                 if symbol:
                     try:
                         days = int(input("Days to backtest (default 90): ") or "90")
@@ -1135,7 +1429,7 @@ if __name__ == "__main__":
                     stock_mode = "KR"
                     print("\nStock mode changed to Korean Market")
                     print("Note: Korean market (KR) uses data.go.kr (KRX OpenAPI) for stocks and securities.")
-                    print("You can set a custom service key with: export KRX_SERVICE_KEY=your_key_here")
+                    print("Set the required service key with: export KRX_SERVICE_KEY=your_key_here")
                 else:
                     stock_mode = "US"
                     print("\nStock mode changed to US Market")

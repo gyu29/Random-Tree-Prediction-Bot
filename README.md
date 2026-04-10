@@ -83,6 +83,16 @@ npm install
 cd ..
 ```
 
+1. Configure required API keys through environment variables:
+
+```bash
+cp .env.example .env
+export ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key
+export KRX_SERVICE_KEY=your_krx_service_key
+```
+
+Do not commit real secrets. The app now expects runtime environment variables instead of hardcoded keys.
+
 ## Usage
 
 ### Download Historical Data

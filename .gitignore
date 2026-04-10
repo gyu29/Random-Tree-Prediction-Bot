@@ -3,5 +3,8 @@
 
 __pycache__/
 *.pyc
+.env
+.env.*
+!.env.example
 
 wf_model_*.pkl
