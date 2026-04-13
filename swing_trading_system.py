@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 import ta
 import joblib
@@ -17,6 +17,96 @@ from dataclasses import dataclass
 import re
 import sys
 warnings.filterwarnings('ignore')
+
+try:
+    from xgboost import XGBClassifier
+except ImportError:
+    XGBClassifier = None
+
+
+class HybridSwingEnsemble:
+    """Average-probability ensemble over Random Forest and XGBoost."""
+
+    def __init__(self, random_forest_model, xgboost_model, decision_threshold=0.70):
+        self.random_forest_model = random_forest_model
+        self.xgboost_model = xgboost_model
+        self.decision_threshold = decision_threshold
+
+    def fit(self, X, y):
+        self.random_forest_model.fit(X, y)
+        self.xgboost_model.fit(X, y)
+        return self
+
+    def predict_proba(self, X):
+        rf_proba = self.random_forest_model.predict_proba(X)
+        xgb_proba = self.xgboost_model.predict_proba(X)
+        return (rf_proba + xgb_proba) / 2.0
+
+    def predict(self, X):
+        probabilities = self.predict_proba(X)[:, 1]
+        return (probabilities >= self.decision_threshold).astype(int)
+
+    @property
+    def feature_importances_(self):
+        rf_importance = np.asarray(self.random_forest_model.feature_importances_, dtype=float)
+        xgb_importance = np.asarray(self.xgboost_model.feature_importances_, dtype=float)
+        return (rf_importance + xgb_importance) / 2.0
+
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE_PATH = os.path.join(PROJECT_ROOT, ".env")
+ENV_EXAMPLE_PATH = os.path.join(PROJECT_ROOT, ".env.example")
+KRX_OPEN_API_ENDPOINTS = [
+    (
+        "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
+        "stock",
+    ),
+    (
+        "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo",
+        "ETF/securities",
+    ),
+]
+
+
+def ensure_env_file_exists():
+    if os.path.exists(ENV_FILE_PATH):
+        return
+
+    if os.path.exists(ENV_EXAMPLE_PATH):
+        with open(ENV_EXAMPLE_PATH, "r", encoding="utf-8") as example_file:
+            env_content = example_file.read()
+    else:
+        env_content = (
+            "ALPHA_VANTAGE_API_KEY=replace_with_your_alpha_vantage_key\n"
+            "KRX_SERVICE_KEY=replace_with_your_krx_service_key\n"
+        )
+
+    with open(ENV_FILE_PATH, "w", encoding="utf-8") as env_file:
+        env_file.write(env_content)
+
+    print("Created .env file. Update ALPHA_VANTAGE_API_KEY and KRX_SERVICE_KEY before use.")
+
+
+def load_env_file():
+    if not os.path.exists(ENV_FILE_PATH):
+        return
+
+    with open(ENV_FILE_PATH, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+ensure_env_file_exists()
+load_env_file()
 
 
 class SecurityValidationError(ValueError):
@@ -223,6 +313,18 @@ class SecretManager:
         secret = os.environ.get(env_var_name, "").strip()
         return secret or None
 
+
+def prompt_float_with_default(prompt_text, default_value, field_name, minimum, maximum):
+    raw_value = input(prompt_text).strip()
+    candidate = raw_value or str(default_value)
+    return SecurityValidator.validate_float(candidate, field_name, minimum, maximum)
+
+
+def prompt_int_with_default(prompt_text, default_value, field_name, minimum, maximum):
+    raw_value = input(prompt_text).strip()
+    candidate = raw_value or str(default_value)
+    return SecurityValidator.validate_int(candidate, field_name, minimum, maximum)
+
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
@@ -232,6 +334,14 @@ def resource_path(relative_path):
 
 class DataProcessor:
     @staticmethod
+    def infer_symbol_from_path(file_path):
+        filename = os.path.basename(file_path)
+        for suffix in ("_historical.csv", "_historical.parquet", "_historical.xlsx", ".csv", ".parquet", ".xlsx"):
+            if filename.endswith(suffix):
+                return filename[:-len(suffix)]
+        return os.path.splitext(filename)[0]
+
+    @staticmethod
     def load_and_validate_data(file_path):
         try:
             df = pd.read_csv(file_path)
@@ -239,13 +349,16 @@ class DataProcessor:
             print(f"Original shape: {df.shape}")
             print(f"Original columns: {list(df.columns)}")
             if 'Date' in df.columns:
-                df['Date'] = pd.to_datetime(df['Date'])
+                # Normalize mixed timezone strings into one UTC-aware index.
+                df['Date'] = pd.to_datetime(df['Date'], utc=True, errors='coerce')
+                df = df.dropna(subset=['Date'])
                 df.set_index('Date', inplace=True)
             elif df.index.name == 'Date' or isinstance(df.index, pd.DatetimeIndex):
                 pass
             else:
                 try:
-                    df.index = pd.to_datetime(df.index)
+                    df.index = pd.to_datetime(df.index, utc=True, errors='coerce')
+                    df = df[~df.index.isna()]
                 except:
                     print("Warning: Could not convert index to datetime")
             df.columns = [col.strip().lower().replace(' ', '_') for col in df.columns]
@@ -271,6 +384,7 @@ class DataProcessor:
             df = df.dropna(subset=required_columns)
             df = df.sort_index()
             df = df[~df.index.duplicated(keep='first')]
+            df['symbol'] = DataProcessor.infer_symbol_from_path(file_path)
             print(f"Processed shape: {df.shape}")
             print(f"Date range: {df.index.min()} to {df.index.max()}")
             print(f"Sample data:")
@@ -359,20 +473,45 @@ class TechnicalIndicators:
 
 class SwingTradeTrainer:
     def __init__(self, swing_threshold=0.15, lookforward_periods=10, min_hold_periods=3):
+        if XGBClassifier is None:
+            raise ImportError(
+                "xgboost is required for training. Install it with: c:\\python314\\python.exe -m pip install xgboost"
+            )
         self.swing_threshold = swing_threshold
         self.lookforward_periods = lookforward_periods
         self.min_hold_periods = min_hold_periods
-        self.model = RandomForestClassifier(
-            n_estimators=100,  # Reduced for faster training with small positive class
-            max_depth=8,       # Reduced to prevent overfitting
+        self.decision_threshold = 0.65
+        self.xgb_scale_pos_weight = 2.0
+        self.random_forest_model = RandomForestClassifier(
+            n_estimators=250,
+            max_depth=10,
             min_samples_split=20,
-            min_samples_leaf=10,
+            min_samples_leaf=8,
             max_features='sqrt',
             random_state=42,
             n_jobs=-1,
-            class_weight={0: 1, 1: 50},  # Heavy weight for positive class
-            bootstrap=True,
-            oob_score=True
+            class_weight='balanced_subsample',
+            bootstrap=True
+        )
+        self.xgboost_model = XGBClassifier(
+            n_estimators=300,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            objective='binary:logistic',
+            eval_metric='aucpr',
+            random_state=42,
+            n_jobs=-1,
+            min_child_weight=3,
+            reg_lambda=1.0,
+            reg_alpha=0.0,
+            tree_method='hist'
+        )
+        self.model = HybridSwingEnsemble(
+            self.random_forest_model,
+            self.xgboost_model,
+            decision_threshold=self.decision_threshold,
         )
         self.scaler = StandardScaler()
         self.feature_columns = []
@@ -401,8 +540,7 @@ class SwingTradeTrainer:
         if not dataframes:
             raise ValueError("No valid data files could be loaded")
         combined_df = pd.concat(dataframes, ignore_index=False)
-        combined_df = combined_df.sort_index()
-        combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+        combined_df = combined_df.sort_values(['symbol'])
         print(f"Combined dataset: {len(combined_df)} rows")
         print(f"Date range: {combined_df.index.min()} to {combined_df.index.max()}")
         return combined_df
@@ -412,8 +550,8 @@ class SwingTradeTrainer:
         price_col = 'adj_close' if 'adj_close' in df.columns else 'close'
         print(f"Creating swing labels with {self.swing_threshold*100}% threshold over {self.lookforward_periods} periods")
         df['swing_label'] = 0
-        df['swing_profit_potential'] = 0
-        df['swing_risk'] = 0
+        df['swing_profit_potential'] = 0.0
+        df['swing_risk'] = 0.0
         for i in range(len(df) - self.lookforward_periods):
             current_price = df.iloc[i][price_col]
             future_slice = df.iloc[i+self.min_hold_periods:i+self.lookforward_periods+1]
@@ -434,41 +572,31 @@ class SwingTradeTrainer:
         if swing_count > 0:
             print(f"Average profit potential: {df[df['swing_label']==1]['swing_profit_potential'].mean():.2%}")
             print(f"Average risk: {df[df['swing_label']==1]['swing_risk'].mean():.2%}")
-        # If still too imbalanced, create synthetic positive samples
-        if swing_percentage < 5.0:
-            print("Class imbalance detected. Creating additional positive samples...")
-            self._balance_labels(df, price_col)
         return df
-    def _balance_labels(self, df, price_col):
-        """Create more balanced labels by lowering criteria"""
-        additional_positives = 0
-        target_positive_ratio = 0.1  # Aim for 10% positive samples
-        current_positives = df['swing_label'].sum()
-        target_positives = int(len(df) * target_positive_ratio)
-        if current_positives < target_positives:
-            needed_positives = target_positives - current_positives
-            for i in range(len(df) - self.lookforward_periods):
-                if df.iloc[i]['swing_label'] == 0 and additional_positives < needed_positives:
-                    current_price = df.iloc[i][price_col]
-                    future_slice = df.iloc[i+self.min_hold_periods:i+self.lookforward_periods+1]
-                    if len(future_slice) > 0:
-                        max_future_high = future_slice['high'].max()
-                        upside_potential = (max_future_high - current_price) / current_price
-                        if upside_potential >= 0.03:  # 3% minimum
-                            df.iloc[i, df.columns.get_loc('swing_label')] = 1
-                            df.iloc[i, df.columns.get_loc('swing_profit_potential')] = upside_potential
-                            additional_positives += 1
-            print(f"Added {additional_positives} additional positive samples for balance")
     def prepare_training_data(self, df):
-        print("Creating technical indicators...")
-        df_features = TechnicalIndicators.create_all_indicators(df)
-        print("Creating swing labels...")
-        df_labeled = self.create_swing_labels(df_features)
+        if 'symbol' in df.columns:
+            grouped_frames = []
+            symbol_count = df['symbol'].nunique()
+            print(f"Creating technical indicators and labels per symbol ({symbol_count} symbols)...")
+            for symbol, symbol_df in df.groupby('symbol', sort=True):
+                symbol_frame = symbol_df.drop(columns=['symbol']).sort_index()
+                print(f"Processing symbol: {symbol} ({len(symbol_frame)} rows)")
+                df_features = TechnicalIndicators.create_all_indicators(symbol_frame)
+                df_labeled = self.create_swing_labels(df_features)
+                df_labeled['symbol'] = symbol
+                grouped_frames.append(df_labeled)
+            df_labeled = pd.concat(grouped_frames, ignore_index=False)
+            df_labeled = df_labeled.sort_values(['symbol'])
+        else:
+            print("Creating technical indicators...")
+            df_features = TechnicalIndicators.create_all_indicators(df)
+            print("Creating swing labels...")
+            df_labeled = self.create_swing_labels(df_features)
 
-        exclude_cols = ['open', 'high', 'low', 'close', 'adj_close', 'volume', 'dividends', 
-                       'stock_splits', 'swing_label', 'swing_profit_potential', 'swing_risk']
+        exclude_cols = ['open', 'high', 'low', 'close', 'adj_close', 'volume', 'dividends',
+                       'stock_splits', 'symbol', 'swing_label', 'swing_profit_potential', 'swing_risk']
         feature_cols = [col for col in df_labeled.columns if col not in exclude_cols]
-        df_labeled[feature_cols] = df_labeled[feature_cols].fillna(method='ffill').fillna(method='bfill')
+        df_labeled[feature_cols] = df_labeled[feature_cols].ffill().bfill()
         df_labeled[feature_cols] = df_labeled[feature_cols].replace([np.inf, -np.inf], 0)
         df_clean = df_labeled.dropna(subset=feature_cols + ['swing_label'])
         print(f"Feature engineering complete. Features: {len(feature_cols)}")
@@ -514,17 +642,22 @@ class SwingTradeTrainer:
         print(f"Test set: {len(X_test)} samples")
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
-        print("Training Random Forest model...")
+        scale_pos_weight = self.xgb_scale_pos_weight
+        self.xgboost_model.set_params(scale_pos_weight=scale_pos_weight)
+        print(
+            f"Training hybrid ensemble... "
+            f"(random forest + xgboost, decision_threshold={self.decision_threshold:.2f}, "
+            f"scale_pos_weight={scale_pos_weight:.2f})"
+        )
         self.model.fit(X_train_scaled, y_train)
-        train_score = self.model.score(X_train_scaled, y_train)
-        test_score = self.model.score(X_test_scaled, y_test)
-        oob_score = self.model.oob_score_
+        y_train_pred = self.model.predict(X_train_scaled)
         y_pred = self.model.predict(X_test_scaled)
         y_pred_proba = self.model.predict_proba(X_test_scaled)
+        train_score = accuracy_score(y_train, y_train_pred)
+        test_score = accuracy_score(y_test, y_pred)
         print(f"\n=== Model Performance ===")
         print(f"Training accuracy: {train_score:.4f}")
         print(f"Test accuracy: {test_score:.4f}")
-        print(f"Out-of-bag score: {oob_score:.4f}")
         print(f"\n=== Classification Report ===")
         print(classification_report(y_test, y_pred))
         print(f"\n=== Confusion Matrix ===")
@@ -538,8 +671,11 @@ class SwingTradeTrainer:
         self.training_stats = {
             'train_score': train_score,
             'test_score': test_score,
-            'oob_score': oob_score,
+            'mean_positive_probability': float(y_pred_proba[:, 1].mean()),
             'feature_importance': feature_importance,
+            'model_type': 'hybrid_random_forest_xgboost',
+            'decision_threshold': self.decision_threshold,
+            'scale_pos_weight': scale_pos_weight,
             'swing_threshold': self.swing_threshold,
             'lookforward_periods': self.lookforward_periods,
             'training_samples': len(X_train),
@@ -593,11 +729,22 @@ class SwingTradeDetector:
                 print(f"Features: {len(self.feature_columns)}")
                 self.swing_threshold = self.training_stats.get('swing_threshold', 0.15)
                 self.lookforward_periods = self.training_stats.get('lookforward_periods', 10)
+                self.decision_threshold = self.training_stats.get('decision_threshold', 0.70)
+                if hasattr(self.model, 'decision_threshold'):
+                    self.model.decision_threshold = self.decision_threshold
             except:
                 print("Model loaded successfully! (No training stats available)")
                 self.swing_threshold = 0.15
                 self.lookforward_periods = 10
+                self.decision_threshold = 0.70
+                if hasattr(self.model, 'decision_threshold'):
+                    self.model.decision_threshold = self.decision_threshold
         except Exception as e:
+            if XGBClassifier is None and ("xgboost" in str(e).lower() or "xgb" in str(e).lower()):
+                raise ValueError(
+                    "Error loading model components: xgboost is required to load the trained model. "
+                    "Install it with: c:\\python314\\python.exe -m pip install xgboost"
+                )
             raise ValueError(f"Error loading model components: {e}")
     def fetch_alpha_vantage_data(self, symbol, function="TIME_SERIES_DAILY", outputsize="compact", interval="monthly"):
         try:
@@ -715,7 +862,7 @@ class SwingTradeDetector:
             return None
 
     def fetch_korean_stock(self, symbol):
-        """Fetch Korean stock data from KRX OpenAPI and normalize to OHLCV DataFrame."""
+        """Fetch Korean stock or ETF data from the KRX Open API and normalize to OHLCV."""
         try:
             from datetime import datetime as dt
 
@@ -753,13 +900,8 @@ class SwingTradeDetector:
                     "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
                 )
 
-            # KR stock endpoints (stock and securities/funds only)
-            endpoints = [
-                ("https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo", "stock"),
-                ("https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo", "fund/securities"),
-            ]
-
             print(f"Fetching KRX data for {symbol} from {start_date_ts.strftime('%Y-%m-%d')} to {end_date_ts.strftime('%Y-%m-%d')}")
+            print("Using KRX Open API (data.go.kr GetStockSecuritiesInfoService)")
             # Masked service key display for debugging (first 6 chars shown)
             service_key = params.get('serviceKey')
             if service_key:
@@ -767,9 +909,10 @@ class SwingTradeDetector:
                 print(f"Using KRX service key: {masked} (set `KRX_SERVICE_KEY` to change)")
 
             all_items = []
+            authorization_failed = False
             
             # Try stock and securities endpoints
-            for base_url, security_type in endpoints:
+            for base_url, security_type in KRX_OPEN_API_ENDPOINTS:
                 try:
                     all_items = []
                     print(f"Trying {security_type} endpoint...")
@@ -780,6 +923,11 @@ class SwingTradeDetector:
 
                         if not response.content:
                             print(f"  Empty response from {security_type} endpoint")
+                            break
+
+                        if response.status_code in {401, 403} or "Unauthorized" in response.text:
+                            print(f"  Response from {security_type}: {response.text[:200]}")
+                            authorization_failed = True
                             break
 
                         # Debug: print response text if it's short (likely an error)
@@ -822,6 +970,11 @@ class SwingTradeDetector:
                 except Exception as e:
                     print(f"  Error on {security_type} endpoint: {e}")
 
+            if authorization_failed:
+                print("KRX authorization failed. Check that `KRX_SERVICE_KEY` is your real data.go.kr service key for this API.")
+                print("On PowerShell, set it for this session with: $env:KRX_SERVICE_KEY='your_key_here'")
+                print("Or update the `.env` file in the project root with: KRX_SERVICE_KEY=your_key_here")
+                return None
             if not all_items:
                 print(f"✗ No KRX data found for {symbol}")
                 return None
@@ -900,12 +1053,7 @@ class SwingTradeDetector:
                 return symbol
             else:
                 # Fetch Korean stock name from API - try stock and securities endpoints
-                endpoints = [
-                    "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
-                    "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo"
-                ]
-                
-                for base_url in endpoints:
+                for base_url, _security_type in KRX_OPEN_API_ENDPOINTS:
                     try:
                         service_key = self.krx_service_key
                         if not service_key:
@@ -963,7 +1111,7 @@ class SwingTradeDetector:
                 print(f"Insufficient data for {symbol} (need at least 100 data points)")
                 return None
             df_features = TechnicalIndicators.create_all_indicators(df)
-            df_features = df_features.fillna(method='ffill').fillna(method='bfill').fillna(0)
+            df_features = df_features.ffill().bfill().fillna(0)
             df_features = df_features.replace([np.inf, -np.inf], 0)
             print(f"Features created for {symbol}: {len(df_features.columns)} columns")
             print(f"Required features: {len(self.feature_columns)}")
@@ -1138,7 +1286,7 @@ class SwingTradeDetector:
             return None
         df_recent = df.tail(days_back).copy()
         df_features = TechnicalIndicators.create_all_indicators(df_recent)
-        df_features = df_features.fillna(method='ffill').fillna(method='bfill')
+        df_features = df_features.ffill().bfill()
         df_features = df_features.replace([np.inf, -np.inf], 0)
         for feature in self.feature_columns:
             if feature not in df_features.columns:
@@ -1149,6 +1297,7 @@ class SwingTradeDetector:
 
         trades = []
         position = None
+        decision_threshold = getattr(self, 'decision_threshold', 0.70)
         for i in range(50, len(df_features) - 10):
             try:
                 current_data = df_features.iloc[i:i+1][self.feature_columns]
@@ -1158,7 +1307,7 @@ class SwingTradeDetector:
                 current_price = df_features.iloc[i]['close']
                 current_date = df_features.index[i]
                 atr_value = df_features.iloc[i].get('atr_14', 0) 
-                if position is None and prediction == 1 and probability >= 0.7:
+                if position is None and prediction == 1 and probability >= decision_threshold:
                     stop_loss, take_profit = self._calculate_stop_take_profit(
                         current_price, atr_value, swing_threshold
                     )
@@ -1374,8 +1523,8 @@ if __name__ == "__main__":
             if choice == "1":
                 print("\n🧠 Training new model...")
                 try:
-                    threshold = float(input("Enter swing threshold (default 0.15): ") or "0.15")
-                    periods = int(input("Enter lookforward periods (default 10): ") or "10")
+                    threshold = prompt_float_with_default("Enter swing threshold (default 0.15): ", 0.15, "swing_threshold", 0.01, 1.0)
+                    periods = prompt_int_with_default("Enter lookforward periods (default 10): ", 10, "lookforward_periods", 2, 90)
                     system.train_model(
                         data_directory=DATA_DIRECTORY,
                         swing_threshold=threshold,
@@ -1408,8 +1557,8 @@ if __name__ == "__main__":
                 if symbols_input:
                     symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
                     try:
-                        interval = int(input("Check interval in seconds (default 300): ") or "300")
-                        threshold = float(input("Alert threshold (default 0.7): ") or "0.7")
+                        interval = prompt_int_with_default("Check interval in seconds (default 300): ", 300, "check_interval", 1, 86400)
+                        threshold = prompt_float_with_default("Alert threshold (default 0.7): ", 0.7, "alert_threshold", 0.0, 1.0)
                         system.monitor_symbols(symbols, interval, threshold, stock_mode)
                     except Exception as e:
                         print(f"Monitoring failed: {e}")
@@ -1418,7 +1567,7 @@ if __name__ == "__main__":
                 symbol = input("Enter symbol for backtest (e.g., AAPL): ").strip()
                 if symbol:
                     try:
-                        days = int(input("Days to backtest (default 90): ") or "90")
+                        days = prompt_int_with_default("Days to backtest (default 90): ", 90, "backtest_days", 1, 3650)
                         result = system.run_backtest(symbol, days, stock_mode)
                         if not result:
                             print(f"Could not backtest {symbol}")
@@ -1429,7 +1578,8 @@ if __name__ == "__main__":
                     stock_mode = "KR"
                     print("\nStock mode changed to Korean Market")
                     print("Note: Korean market (KR) uses data.go.kr (KRX OpenAPI) for stocks and securities.")
-                    print("Set the required service key with: export KRX_SERVICE_KEY=your_key_here")
+                    print("Set the required service key in PowerShell with: $env:KRX_SERVICE_KEY='your_key_here'")
+                    print("Or put this in the project `.env` file: KRX_SERVICE_KEY=your_key_here")
                 else:
                     stock_mode = "US"
                     print("\nStock mode changed to US Market")

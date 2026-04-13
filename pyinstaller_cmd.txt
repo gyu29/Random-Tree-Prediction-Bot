@@ -5,10 +5,12 @@ pyinstaller --onefile `
     --hidden-import sklearn.tree `
     --hidden-import sklearn.utils._weight_vector `
     --hidden-import sklearn.neighbors._partition_nodes `
+    --hidden-import xgboost `
     --hidden-import scipy.special._ufuncs_cxx `
     --hidden-import scipy.linalg.cython_blas `
     --hidden-import scipy.linalg.cython_lapack `
     --collect-data sklearn `
+    --collect-all xgboost `
     --add-data "swing_model_enhanced.pkl;." `
     --add-data "swing_scaler_enhanced.pkl;." `
     --add-data "feature_columns_enhanced.pkl;." `
@@ -22,10 +24,12 @@ pyinstaller --onefile \
     --hidden-import sklearn.tree \
     --hidden-import sklearn.utils._weight_vector \
     --hidden-import sklearn.neighbors._partition_nodes \
+    --hidden-import xgboost \
     --hidden-import scipy.special._ufuncs_cxx \
     --hidden-import scipy.linalg.cython_blas \
     --hidden-import scipy.linalg.cython_lapack \
     --collect-data sklearn \
+    --collect-all xgboost \
     --add-data "swing_model_enhanced.pkl:." \
     --add-data "swing_scaler_enhanced.pkl:." \
     --add-data "feature_columns_enhanced.pkl:." \
