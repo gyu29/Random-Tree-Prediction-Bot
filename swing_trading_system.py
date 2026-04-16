@@ -16,6 +16,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 import re
 import sys
+import xml.etree.ElementTree as ET
 warnings.filterwarnings('ignore')
 
 try:
@@ -56,15 +57,109 @@ class HybridSwingEnsemble:
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE_PATH = os.path.join(PROJECT_ROOT, ".env")
 ENV_EXAMPLE_PATH = os.path.join(PROJECT_ROOT, ".env.example")
-KRX_OPEN_API_ENDPOINTS = [
-    (
-        "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
-        "stock",
-    ),
-    (
-        "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo",
-        "ETF/securities",
-    ),
+DEFAULT_ENV_CONTENT = (
+    "# data.go.kr service key used for Korean market lookups\n"
+    "KRX_SERVICE_KEY=replace_with_your_data_go_kr_service_key\n"
+    "\n"
+    "# Optional: only needed for US market lookups\n"
+    "# ALPHA_VANTAGE_API_KEY=replace_with_your_alpha_vantage_key\n"
+)
+KRX_MARKET_ENDPOINTS = {
+    "stock": {
+        "label": "stock",
+        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
+        "verified": True,
+    },
+    "security": {
+        "label": "beneficiary security",
+        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo",
+        "verified": True,
+    },
+    "warrant_certificate": {
+        "label": "preemptive right certificate",
+        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getPreemptiveRightCertificatePriceInfo",
+        "verified": True,
+    },
+    "warrant_security": {
+        "label": "preemptive right security",
+        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getPreemptiveRightSecuritiesPriceInfo",
+        "verified": True,
+    },
+    "etf": {
+        "label": "ETF",
+        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETFPriceInfo",
+        "verified": True,
+    },
+    "etn": {
+        "label": "ETN",
+        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETNPriceInfo",
+        "verified": True,
+    },
+    "elw": {
+        "label": "ELW",
+        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getELWPriceInfo",
+        "verified": True,
+    },
+    "bond": {
+        "label": "bond",
+        "guide": "data.go.kr 금융위원회_채권시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetBondSecuritiesInfoService/getBondPriceInfo",
+        "verified": True,
+    },
+    "future": {
+        "label": "future",
+        "guide": "data.go.kr 금융위원회_파생상품시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetDerivativesInfoService/getFuturePriceInfo",
+        "verified": False,
+    },
+    "option": {
+        "label": "option",
+        "guide": "data.go.kr 금융위원회_파생상품시세정보",
+        "url": "https://apis.data.go.kr/1160100/service/GetDerivativesInfoService/getOptionPriceInfo",
+        "verified": False,
+    },
+}
+
+KRX_ASSET_TYPE_ALIASES = {
+    "stock": "stock",
+    "stocks": "stock",
+    "equity": "stock",
+    "equities": "stock",
+    "security": "security",
+    "securities": "security",
+    "beneficiary": "security",
+    "fund": "security",
+    "funds": "security",
+    "etf": "etf",
+    "etn": "etn",
+    "elw": "elw",
+    "bond": "bond",
+    "bonds": "bond",
+    "future": "future",
+    "futures": "future",
+    "option": "option",
+    "options": "option",
+    "warrant": "warrant_security",
+    "warrants": "warrant_security",
+    "certificate": "warrant_certificate",
+}
+
+KRX_DEFAULT_LOOKUP_ORDER = [
+    "stock",
+    "etf",
+    "etn",
+    "elw",
+    "security",
+    "warrant_security",
+    "warrant_certificate",
+    "bond",
 ]
 
 
@@ -76,15 +171,12 @@ def ensure_env_file_exists():
         with open(ENV_EXAMPLE_PATH, "r", encoding="utf-8") as example_file:
             env_content = example_file.read()
     else:
-        env_content = (
-            "ALPHA_VANTAGE_API_KEY=replace_with_your_alpha_vantage_key\n"
-            "KRX_SERVICE_KEY=replace_with_your_krx_service_key\n"
-        )
+        env_content = DEFAULT_ENV_CONTENT
 
     with open(ENV_FILE_PATH, "w", encoding="utf-8") as env_file:
         env_file.write(env_content)
 
-    print("Created .env file. Update ALPHA_VANTAGE_API_KEY and KRX_SERVICE_KEY before use.")
+    print("Created .env file. Update KRX_SERVICE_KEY before requesting Korean market data.")
 
 
 def load_env_file():
@@ -103,6 +195,26 @@ def load_env_file():
 
             if key and key not in os.environ:
                 os.environ[key] = value
+
+
+def read_env_file_value(target_key):
+    """Read a single key directly from the project .env file."""
+    if not os.path.exists(ENV_FILE_PATH):
+        return None
+
+    with open(ENV_FILE_PATH, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key != target_key:
+                continue
+            return value.strip().strip('"').strip("'")
+
+    return None
 
 
 ensure_env_file_exists()
@@ -184,7 +296,10 @@ class SecurityValidator:
     """Schema-style validators and sanitizers for all user-controlled input."""
 
     US_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
-    KR_SYMBOL_PATTERN = re.compile(r"^(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9가-힣 .&()/_-]{1,30})$")
+    KR_SYMBOL_PATTERN = re.compile(
+        r"^(?:(?:STOCK|STOCKS|EQUITY|EQUITIES|SECURITY|SECURITIES|BENEFICIARY|FUND|FUNDS|ETF|ETN|ELW|BOND|BONDS|FUTURE|FUTURES|OPTION|OPTIONS|WARRANT|WARRANTS|CERTIFICATE):)?(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9가-힣 .&()/_-]{1,30})$",
+        re.IGNORECASE,
+    )
 
     @staticmethod
     def validate_no_unexpected_fields(payload, allowed_fields, field_name):
@@ -210,7 +325,7 @@ class SecurityValidator:
 
     @classmethod
     def validate_symbol(cls, symbol, stock_mode, security_config):
-        cleaned = cls.sanitize_text(symbol, "symbol", security_config.max_symbol_length if stock_mode == "US" else 30)
+        cleaned = cls.sanitize_text(symbol, "symbol", security_config.max_symbol_length if stock_mode == "US" else 48)
         normalized = cleaned.upper() if stock_mode == "US" or cleaned.isascii() else cleaned
         pattern = cls.US_SYMBOL_PATTERN if stock_mode == "US" else cls.KR_SYMBOL_PATTERN
         if not pattern.fullmatch(normalized):
@@ -300,8 +415,25 @@ class SecretManager:
     """Load secrets from the environment without hardcoded fallbacks."""
 
     @staticmethod
+    def _normalize_secret(secret):
+        if secret is None:
+            return None
+
+        normalized = str(secret).strip().strip('"').strip("'").strip()
+        return normalized or None
+
+    @staticmethod
+    def get_runtime_secret(env_var_name, prefer_env_file=False):
+        env_file_secret = SecretManager._normalize_secret(read_env_file_value(env_var_name))
+        environment_secret = SecretManager._normalize_secret(os.environ.get(env_var_name))
+
+        if prefer_env_file and env_file_secret:
+            return env_file_secret
+        return environment_secret or env_file_secret
+
+    @staticmethod
     def get_required_secret(env_var_name):
-        secret = os.environ.get(env_var_name, "").strip()
+        secret = SecretManager.get_runtime_secret(env_var_name)
         if not secret:
             raise SecurityValidationError(
                 f"Missing required secret: {env_var_name}. Set it as an environment variable before running this operation."
@@ -310,8 +442,7 @@ class SecretManager:
 
     @staticmethod
     def get_optional_secret(env_var_name):
-        secret = os.environ.get(env_var_name, "").strip()
-        return secret or None
+        return SecretManager.get_runtime_secret(env_var_name)
 
 
 def prompt_float_with_default(prompt_text, default_value, field_name, minimum, maximum):
@@ -698,17 +829,25 @@ class SwingTradeTrainer:
         print(f"Training stats saved as training_stats.pkl")
 
 class SwingTradeDetector:
-    def __init__(self, api_key, model_path="swing_model_enhanced.pkl", 
+    def __init__(self, api_key=None, model_path="swing_model_enhanced.pkl", 
                  scaler_path="swing_scaler_enhanced.pkl", 
                  features_path="feature_columns_enhanced.pkl"):
         self.security_config = SecurityConfig()
-        self.api_key = SecurityValidator.sanitize_text(api_key, "ALPHA_VANTAGE_API_KEY", 128)
+        self.api_key = (
+            SecurityValidator.sanitize_text(api_key, "ALPHA_VANTAGE_API_KEY", 128)
+            if api_key else None
+        )
         self.base_url = "https://www.alphavantage.co/query?"
         self._last_alpha_vantage_request_ts = 0.0
         self.krx_service_key = SecretManager.get_optional_secret("KRX_SERVICE_KEY")
         self.load_model(model_path, scaler_path, features_path)
     def _alpha_vantage_get(self, params, timeout=30):
         """Space requests out so free-tier Alpha Vantage calls don't trip burst limits."""
+        if not self.api_key:
+            raise ValueError(
+                "ALPHA_VANTAGE_API_KEY is required for US market requests. "
+                "Korean market requests use KRX_SERVICE_KEY from data.go.kr."
+            )
         min_interval_seconds = 1.2
         elapsed = time.time() - self._last_alpha_vantage_request_ts
         if elapsed < min_interval_seconds:
@@ -717,6 +856,265 @@ class SwingTradeDetector:
         self._last_alpha_vantage_request_ts = time.time()
         response.raise_for_status()
         return response
+    def _build_krx_base_params(self, include_date_range=False):
+        params = {
+            "resultType": "json",
+            "numOfRows": 1000 if include_date_range else 10,
+            "pageNo": 1,
+        }
+
+        if include_date_range:
+            end_date = pd.Timestamp(datetime.now()).normalize()
+            start_date = pd.Timestamp(end_date - pd.DateOffset(months=14)).normalize()
+            params["beginBasDt"] = start_date.strftime("%Y%m%d")
+            params["endBasDt"] = end_date.strftime("%Y%m%d")
+
+        return params
+    def _parse_krx_symbol(self, symbol):
+        normalized_symbol = (symbol or "").strip()
+        match = re.match(r"^(?P<asset>[A-Za-z]+):(?P<value>.+)$", normalized_symbol)
+        if not match:
+            return {
+                "raw_symbol": normalized_symbol,
+                "lookup_symbol": normalized_symbol,
+                "asset_type": None,
+            }
+
+        alias = match.group("asset").strip().lower()
+        asset_type = KRX_ASSET_TYPE_ALIASES.get(alias)
+        lookup_symbol = match.group("value").strip()
+        if asset_type and lookup_symbol:
+            return {
+                "raw_symbol": normalized_symbol,
+                "lookup_symbol": lookup_symbol,
+                "asset_type": asset_type,
+            }
+
+        return {
+            "raw_symbol": normalized_symbol,
+            "lookup_symbol": normalized_symbol,
+            "asset_type": None,
+        }
+    def _krx_endpoint_specs_for_symbol(self, symbol):
+        symbol_info = self._parse_krx_symbol(symbol)
+        asset_type = symbol_info["asset_type"]
+        endpoint_keys = [asset_type] if asset_type else KRX_DEFAULT_LOOKUP_ORDER
+        endpoint_specs = [KRX_MARKET_ENDPOINTS[key] for key in endpoint_keys if key in KRX_MARKET_ENDPOINTS]
+        verified_specs = [spec for spec in endpoint_specs if spec.get("verified", False)]
+        return symbol_info, verified_specs
+    def _build_krx_lookup_params(self, symbol, include_date_range=False):
+        sym = self._parse_krx_symbol(symbol)["lookup_symbol"]
+        base_params = self._build_krx_base_params(include_date_range=include_date_range)
+
+        if sym.startswith("KR") and len(sym) >= 10:
+            return [
+                {**base_params, "isinCd": sym},
+                {**base_params, "likeIsinCd": sym},
+            ]
+        if sym.isdigit():
+            return [{**base_params, "likeSrtnCd": sym}]
+        return [
+            {**base_params, "itmsNm": sym},
+            {**base_params, "likeItmsNm": sym},
+        ]
+    def _parse_krx_xml_response(self, response_text):
+        root = ET.fromstring(response_text)
+        header = root.find("./header")
+        body = root.find("./body")
+        result_code = header.findtext("resultCode", default="") if header is not None else ""
+        result_msg = header.findtext("resultMsg", default="") if header is not None else ""
+        total_count = body.findtext("totalCount", default="0") if body is not None else "0"
+        items = []
+
+        if body is not None:
+            items_container = body.find("items")
+            if items_container is not None:
+                for item in items_container.findall("item"):
+                    items.append({child.tag: child.text for child in item})
+
+        return {
+            "response": {
+                "header": {
+                    "resultCode": result_code,
+                    "resultMsg": result_msg,
+                },
+                "body": {
+                    "totalCount": total_count,
+                    "items": {"item": items},
+                },
+            }
+        }
+    def _filter_krx_items_for_symbol(self, items, symbol):
+        normalized_symbol = self._parse_krx_symbol(symbol)["lookup_symbol"]
+        if not items:
+            return []
+
+        if normalized_symbol.isdigit():
+            exact_items = [item for item in items if str(item.get("srtnCd", "")).strip() == normalized_symbol]
+            return exact_items or items
+
+        if normalized_symbol.startswith("KR") and len(normalized_symbol) >= 10:
+            exact_items = [item for item in items if str(item.get("isinCd", "")).strip() == normalized_symbol]
+            return exact_items or items
+
+        exact_name_items = [item for item in items if str(item.get("itmsNm", "")).strip() == normalized_symbol]
+        candidate_items = exact_name_items or items
+
+        grouped_items = defaultdict(list)
+        for item in candidate_items:
+            identity = str(item.get("srtnCd") or item.get("isinCd") or item.get("itmsNm") or "").strip()
+            grouped_items[identity].append(item)
+
+        if len(grouped_items) <= 1:
+            return candidate_items
+
+        best_identity = max(grouped_items.items(), key=lambda entry: len(entry[1]))[0]
+        return grouped_items[best_identity]
+    def _normalize_krx_price_frame(self, items):
+        df = pd.DataFrame(items)
+        if df.empty:
+            return None
+
+        df = df.rename(
+            columns={
+                "basDt": "date",
+                "clpr": "close",
+                "mkp": "open",
+                "hipr": "high",
+                "lopr": "low",
+                "trqu": "volume",
+            }
+        )
+        if "date" not in df.columns or "close" not in df.columns:
+            return None
+
+        for col in ["open", "high", "low"]:
+            if col not in df.columns:
+                df[col] = df["close"]
+        if "volume" not in df.columns:
+            df["volume"] = 0
+
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(str).str.replace(",", "", regex=False)
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+        df = df.dropna(subset=["date", "close"])
+        if df.empty:
+            return None
+
+        df = df.sort_values("date").drop_duplicates(subset=["date"], keep="last").set_index("date")
+        df["adj_close"] = df["close"]
+        return df
+    def _fetch_krx_market_items(self, symbol, include_date_range=True):
+        service_key = SecretManager.get_runtime_secret("KRX_SERVICE_KEY", prefer_env_file=True)
+        self.krx_service_key = service_key
+        if not service_key:
+            raise SecurityValidationError(
+                "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
+            )
+
+        symbol_info, endpoint_specs = self._krx_endpoint_specs_for_symbol(symbol)
+        if not endpoint_specs:
+            requested_asset = symbol_info["asset_type"] or "unknown"
+            print(
+                f"No verified KRX endpoint is configured yet for asset type `{requested_asset}`. "
+                f"Supported verified KR asset types are: stock, etf, etn, elw, security, warrant, bond."
+            )
+            return None, None
+        param_candidates = self._build_krx_lookup_params(symbol, include_date_range=include_date_range)
+
+        if include_date_range:
+            end_date_ts = pd.to_datetime(param_candidates[0]["endBasDt"], format="%Y%m%d")
+            start_date_ts = pd.to_datetime(param_candidates[0]["beginBasDt"], format="%Y%m%d")
+            print(
+                f"Fetching KRX data for {symbol_info['lookup_symbol']} from "
+                f"{start_date_ts.strftime('%Y-%m-%d')} to {end_date_ts.strftime('%Y-%m-%d')}"
+            )
+        else:
+            print(f"Resolving KRX instrument for {symbol_info['lookup_symbol']}")
+
+        masked = service_key[:6] + "..." if len(service_key) > 8 else service_key
+        print(f"Using KRX service key: {masked} (set `KRX_SERVICE_KEY` to change)")
+
+        authorization_failed = False
+        for endpoint_spec in endpoint_specs:
+            endpoint_items = []
+            print(
+                f"Trying KRX {endpoint_spec['label']} endpoint "
+                f"from {endpoint_spec['guide']}..."
+            )
+            for params in param_candidates:
+                page = 1
+                while True:
+                    request_params = {**params, "pageNo": page, "serviceKey": service_key}
+                    response = requests.get(endpoint_spec["url"], params=request_params, timeout=20)
+                    parsed_response, is_auth_failure, should_stop = self._parse_krx_response(
+                        response,
+                        endpoint_spec["label"],
+                    )
+                    authorization_failed = authorization_failed or is_auth_failure
+                    if should_stop and parsed_response is None:
+                        break
+
+                    items = self._filter_krx_items_for_symbol(parsed_response["items"], symbol)
+                    if not items:
+                        break
+
+                    endpoint_items.extend(items)
+                    total_count = int(parsed_response["total_count"] or 0)
+                    if len(endpoint_items) >= total_count:
+                        break
+                    page += 1
+
+                endpoint_items = self._filter_krx_items_for_symbol(endpoint_items, symbol)
+                if endpoint_items:
+                    return endpoint_spec, endpoint_items
+
+        if authorization_failed:
+            print("KRX authorization failed.")
+            print("This usually means the current `KRX_SERVICE_KEY` is not approved for these data.go.kr financial APIs, is the wrong key, or approval has not propagated yet.")
+            print("On PowerShell, set it for this session with: $env:KRX_SERVICE_KEY='your_key_here'")
+            print("Or update the `.env` file in the project root with: KRX_SERVICE_KEY=your_key_here")
+            return None, None
+
+        return None, None
+    def _parse_krx_response(self, response, security_type):
+        if not response.content:
+            print(f"  Empty response from {security_type} endpoint")
+            return None, False, True
+
+        response_text = response.text[:200]
+        lowered_text = response.text.lower()
+        if response.status_code in {401, 403} or "unauthorized" in lowered_text:
+            print(f"  Response from {security_type}: {response_text}")
+            return None, True, True
+
+        if len(response.content) < 500:
+            print(f"  Response from {security_type}: {response_text}")
+
+        try:
+            if response.text.lstrip().startswith("<"):
+                data = self._parse_krx_xml_response(response.text)
+            else:
+                data = response.json()
+        except Exception as parse_err:
+            print(f"  Non-JSON/XML response from {security_type}: {parse_err}")
+            print(f"  Response text: {response_text}")
+            return None, False, True
+
+        result_code = data.get("response", {}).get("header", {}).get("resultCode", "")
+        result_msg = data.get("response", {}).get("header", {}).get("resultMsg", "")
+        if result_code != "00":
+            print(f"  API Error - Code: {result_code}, Message: {result_msg}")
+            return None, result_code in {"20", "30", "31", "32"}, True
+
+        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+        total_count = data.get("response", {}).get("body", {}).get("totalCount", 0)
+        if isinstance(items, dict):
+            items = [items]
+
+        return {"items": items or [], "total_count": total_count}, False, False
     def load_model(self, model_path, scaler_path, features_path):
         try:
             self.model = joblib.load(resource_path(model_path))
@@ -748,6 +1146,12 @@ class SwingTradeDetector:
             raise ValueError(f"Error loading model components: {e}")
     def fetch_alpha_vantage_data(self, symbol, function="TIME_SERIES_DAILY", outputsize="compact", interval="monthly"):
         try:
+            if not self.api_key:
+                print(
+                    "US market data is disabled because ALPHA_VANTAGE_API_KEY is not set. "
+                    "Korean market data continues to use data.go.kr via KRX_SERVICE_KEY."
+                )
+                return None
             commodity_map = {
                 'COPPER': 'COPPER',
                 'ALUMINUM': 'ALUMINUM',
@@ -862,152 +1266,22 @@ class SwingTradeDetector:
             return None
 
     def fetch_korean_stock(self, symbol):
-        """Fetch Korean stock or ETF data from the KRX Open API and normalize to OHLCV."""
+        """Fetch Korean market OHLCV data using explicit KRX market guides."""
         try:
-            from datetime import datetime as dt
-
-            # Date range: last ~14 months of data
-            end_date = dt.now()
-            start_date = end_date - pd.DateOffset(months=14)
-
-            end_date_ts = pd.Timestamp(end_date).normalize()
-            start_date_ts = pd.Timestamp(start_date).normalize()
-
-            params = {
-                # OWASP guidance: never ship embedded API secrets. Read them from the environment at runtime.
-                "serviceKey": self.krx_service_key,
-                "resultType": "json",
-                # We'll set identifier filters below based on input type (code vs name)
-                "beginBasDt": start_date_ts.strftime("%Y%m%d"),
-                "endBasDt": end_date_ts.strftime("%Y%m%d"),
-                "numOfRows": 1000,
-                "pageNo": 1,
-            }
-
-            # Identifier strategy: if `symbol` looks like a KRX short code (digits), use likeSrtnCd.
-            # If it looks like an ISIN (starts with KR), use likeIsinCd.
-            # Otherwise, treat it as a name and use likeItmsNm to match ETFs by name.
-            sym = (symbol or '').strip()
-            if sym.startswith('KR') and len(sym) >= 10:
-                params["likeIsinCd"] = sym
-            elif sym.isdigit():
-                params["likeSrtnCd"] = sym
-            else:
-                params["likeItmsNm"] = sym
-
-            if not params["serviceKey"]:
-                raise SecurityValidationError(
-                    "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
-                )
-
-            print(f"Fetching KRX data for {symbol} from {start_date_ts.strftime('%Y-%m-%d')} to {end_date_ts.strftime('%Y-%m-%d')}")
-            print("Using KRX Open API (data.go.kr GetStockSecuritiesInfoService)")
-            # Masked service key display for debugging (first 6 chars shown)
-            service_key = params.get('serviceKey')
-            if service_key:
-                masked = service_key[:6] + '...' if len(service_key) > 8 else service_key
-                print(f"Using KRX service key: {masked} (set `KRX_SERVICE_KEY` to change)")
-
-            all_items = []
-            authorization_failed = False
-            
-            # Try stock and securities endpoints
-            for base_url, security_type in KRX_OPEN_API_ENDPOINTS:
-                try:
-                    all_items = []
-                    print(f"Trying {security_type} endpoint...")
-
-                    for page in range(1, 10):  # up to 10 pages
-                        params['pageNo'] = page
-                        response = requests.get(base_url, params=params, timeout=20)
-
-                        if not response.content:
-                            print(f"  Empty response from {security_type} endpoint")
-                            break
-
-                        if response.status_code in {401, 403} or "Unauthorized" in response.text:
-                            print(f"  Response from {security_type}: {response.text[:200]}")
-                            authorization_failed = True
-                            break
-
-                        # Debug: print response text if it's short (likely an error)
-                        if len(response.content) < 500:
-                            print(f"  Response from {security_type}: {response.text[:200]}")
-
-                        try:
-                            data = response.json()
-                        except Exception as json_err:
-                            print(f"  JSON decode error on {security_type}: {json_err}")
-                            print(f"  Response text: {response.text[:200]}")
-                            break
-
-                        # Check for API errors
-                        result_code = data.get("response", {}).get("header", {}).get("resultCode", "")
-                        result_msg = data.get("response", {}).get("header", {}).get("resultMsg", "")
-                        
-                        if result_code != "00":
-                            print(f"  API Error - Code: {result_code}, Message: {result_msg}")
-                            break
-
-                        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-
-                        if not items:
-                            break
-
-                        if isinstance(items, dict):
-                            items = [items]
-
-                        all_items.extend(items)
-
-                        total_count = data.get("response", {}).get("body", {}).get("totalCount", 0)
-                        if len(all_items) >= total_count:
-                            break
-
-                    if all_items:
-                        print(f"✓ Found {symbol} as {security_type} with {len(all_items)} rows")
-                        break
-
-                except Exception as e:
-                    print(f"  Error on {security_type} endpoint: {e}")
-
-            if authorization_failed:
-                print("KRX authorization failed. Check that `KRX_SERVICE_KEY` is your real data.go.kr service key for this API.")
-                print("On PowerShell, set it for this session with: $env:KRX_SERVICE_KEY='your_key_here'")
-                print("Or update the `.env` file in the project root with: KRX_SERVICE_KEY=your_key_here")
-                return None
-            if not all_items:
-                print(f"✗ No KRX data found for {symbol}")
+            endpoint_spec, items = self._fetch_krx_market_items(symbol, include_date_range=True)
+            if not endpoint_spec or not items:
+                print(f"No KRX data found for {symbol}")
                 return None
 
-            # Normalize into DataFrame
-            df = pd.DataFrame(all_items)
+            df = self._normalize_krx_price_frame(items)
+            if df is None or df.empty:
+                print(f"KRX returned data for {symbol}, but it could not be normalized into OHLCV.")
+                return None
 
-            # Rename fields for consistency
-            rename_map = {
-                "clpr": "close",
-                "mkp": "open",
-                "hipr": "high",
-                "lopr": "low",
-                "trqu": "volume",
-                "basDt": "date"
-            }
-
-            df = df.rename(columns=rename_map)
-
-            # Convert numbers (remove commas from Korean format)
-            for col in ["open", "high", "low", "close", "volume"]:
-                if col in df:
-                    df[col] = df[col].astype(str).str.replace(',', '')
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-
-            # Convert date to index (format: YYYYMMDD)
-            df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
-            df = df.dropna(subset=["date"]).set_index("date").sort_index()
-
-            # Add adj_close column
-            df['adj_close'] = df['close']
-
-            print(f"✓ Successfully fetched {len(df)} rows of KRX data for {symbol} (from {df.index.min().date()} to {df.index.max().date()})")
+            print(
+                f"Successfully fetched {len(df)} rows of KRX {endpoint_spec['label']} data for {symbol} "
+                f"(from {df.index.min().date()} to {df.index.max().date()})"
+            )
 
             return df
 
@@ -1052,31 +1326,12 @@ class SwingTradeDetector:
                         return symbol
                 return symbol
             else:
-                # Fetch Korean stock name from API - try stock and securities endpoints
-                for base_url, _security_type in KRX_OPEN_API_ENDPOINTS:
-                    try:
-                        service_key = self.krx_service_key
-                        if not service_key:
-                            raise SecurityValidationError(
-                                "Missing required secret: KRX_SERVICE_KEY. Set it before requesting Korean market data."
-                            )
-                        params = {
-                            'serviceKey': service_key,
-                            'resultType': 'json',
-                            'likeSrtnCd': symbol,
-                            'numOfRows': 1,
-                            'pageNo': 1
-                        }
-                        r = requests.get(base_url, params=params, timeout=10)
-                        r.raise_for_status()
-                        data = r.json()
-                        items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
-                        if items:
-                            item = items[0] if isinstance(items, list) else items
-                            name = item.get('itmsNm', symbol)
-                            return name
-                    except Exception:
-                        continue
+                try:
+                    _endpoint_spec, items = self._fetch_krx_market_items(symbol, include_date_range=False)
+                    if items:
+                        return items[0].get('itmsNm', self._parse_krx_symbol(symbol)["lookup_symbol"])
+                except Exception:
+                    pass
                 
                 # Fallback to hardcoded map if API fails
                 kr_map = {
@@ -1439,15 +1694,21 @@ class SwingTradingSystem:
         except Exception as e:
             print(f"❌ Error during training: {e}")
             raise
-    def initialize_detector(self, model_path="swing_model_enhanced.pkl"):
-        if self.api_key is None:
-            raise ValueError("API key required for real-time detection")
+    def initialize_detector(self, stock_mode="KR", model_path="swing_model_enhanced.pkl"):
+        if stock_mode == "US" and self.api_key is None:
+            raise ValueError(
+                "ALPHA_VANTAGE_API_KEY is required for US market detection. "
+                "For Korean data.go.kr lookups, switch to KR mode and set KRX_SERVICE_KEY."
+            )
         try:
             self.detector = SwingTradeDetector(api_key=self.api_key, model_path=model_path)
-            print("✅ Swing trade detector initialized successfully!")
+            if stock_mode == "KR":
+                print("Swing trade detector initialized for Korean market data.go.kr lookups.")
+            else:
+                print("Swing trade detector initialized for US market lookups.")
             return True
         except Exception as e:
-            print(f"❌ Error initializing detector: {e}")
+            print(f"Error initializing detector: {e}")
             raise
     def analyze_symbol(self, symbol, stock_mode="US", request_context=None):
         try:
@@ -1463,7 +1724,7 @@ class SwingTradingSystem:
         except (SecurityValidationError, RateLimitExceededError) as error:
             return self._handle_security_error(error)
         if self.detector is None:
-            self.initialize_detector()
+            self.initialize_detector(stock_mode=validated_mode)
         return self.detector.analyze_single_symbol(validated_symbol, validated_mode)
 
     def monitor_symbols(self, symbols, check_interval=300, alert_threshold=0.7, stock_mode="US", request_context=None):
@@ -1482,7 +1743,7 @@ class SwingTradingSystem:
         except (SecurityValidationError, RateLimitExceededError) as error:
             return self._handle_security_error(error)
         if self.detector is None:
-            self.initialize_detector()
+            self.initialize_detector(stock_mode=validated_mode)
         self.detector.monitor_multiple_symbols(validated_symbols, validated_interval, validated_threshold, validated_mode)
 
     def run_backtest(self, symbol, days_back=90, stock_mode="US", request_context=None):
@@ -1500,16 +1761,18 @@ class SwingTradingSystem:
         except (SecurityValidationError, RateLimitExceededError) as error:
             return self._handle_security_error(error)
         if self.detector is None:
-            self.initialize_detector()
+            self.initialize_detector(stock_mode=validated_mode)
         return self.detector.backtest_strategy(validated_symbol, validated_days, validated_mode)
 
 if __name__ == "__main__":
     ALPHA_VANTAGE_API_KEY = SecretManager.get_optional_secret("ALPHA_VANTAGE_API_KEY")
     DATA_DIRECTORY = "./historical_data"
     system = SwingTradingSystem(api_key=ALPHA_VANTAGE_API_KEY)
-    print("🚀 Advanced Swing Trading ML System")
+    print("Advanced Swing Trading ML System")
     print("=" * 50)
-    stock_mode = "US"
+    print("Korean market mode uses data.go.kr through KRX_SERVICE_KEY.")
+    print("US market mode is optional and uses ALPHA_VANTAGE_API_KEY only when provided.")
+    stock_mode = "KR"
     while True:
         print("\nSelect an option:")
         print("1. Train Model")
@@ -1521,7 +1784,7 @@ if __name__ == "__main__":
         try:
             choice = input("\nEnter your choice (1-6): ").strip()
             if choice == "1":
-                print("\n🧠 Training new model...")
+                print("\nTraining new model...")
                 try:
                     threshold = prompt_float_with_default("Enter swing threshold (default 0.15): ", 0.15, "swing_threshold", 0.01, 1.0)
                     periods = prompt_int_with_default("Enter lookforward periods (default 10): ", 10, "lookforward_periods", 2, 90)
@@ -1533,14 +1796,15 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"Training failed: {e}")
             elif choice == "2":
-                print("\n🧠 Single Symbol Analysis")
-                symbol = input("Enter symbol (e.g., AAPL): ").strip()
+                print(f"\nSingle Symbol Analysis [{stock_mode}]")
+                example_symbol = "005930" if stock_mode == "KR" else "AAPL"
+                symbol = input(f"Enter symbol (e.g., {example_symbol}): ").strip()
                 if symbol:
                     try:
                         # Show company name for confirmation
                         if system.detector is None:
                             try:
-                                system.initialize_detector()
+                                system.initialize_detector(stock_mode=stock_mode)
                             except Exception:
                                 pass
                         if system.detector is not None:
@@ -1552,8 +1816,9 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"Analysis failed: {e}")
             elif choice == "3":
-                print("\n🧠 Multi-Symbol Monitoring")
-                symbols_input = input("Enter symbols separated by commas (e.g., AAPL,MSFT,GOOGL): ").strip()
+                print(f"\nMulti-Symbol Monitoring [{stock_mode}]")
+                example_symbols = "005930,000660,035420" if stock_mode == "KR" else "AAPL,MSFT,GOOGL"
+                symbols_input = input(f"Enter symbols separated by commas (e.g., {example_symbols}): ").strip()
                 if symbols_input:
                     symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
                     try:
@@ -1564,7 +1829,8 @@ if __name__ == "__main__":
                         print(f"Monitoring failed: {e}")
             elif choice == "4":
                 print("\nStrategy Backtest")
-                symbol = input("Enter symbol for backtest (e.g., AAPL): ").strip()
+                example_symbol = "005930" if stock_mode == "KR" else "AAPL"
+                symbol = input(f"Enter symbol for backtest (e.g., {example_symbol}): ").strip()
                 if symbol:
                     try:
                         days = prompt_int_with_default("Days to backtest (default 90): ", 90, "backtest_days", 1, 3650)
@@ -1583,6 +1849,7 @@ if __name__ == "__main__":
                 else:
                     stock_mode = "US"
                     print("\nStock mode changed to US Market")
+                    print("US mode requires ALPHA_VANTAGE_API_KEY. Korean mode uses data.go.kr with KRX_SERVICE_KEY.")
             elif choice == "6":
                 print("\nGoodbye!")
                 break
@@ -1593,3 +1860,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Unexpected error: {e}")
     print("System shutdown complete.")
+
