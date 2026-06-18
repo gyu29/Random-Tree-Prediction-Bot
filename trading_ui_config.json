@@ -1,0 +1,85 @@
+{
+  "market_mode": "US",
+  "last_symbol": "NVDA",
+  "watchlist": [
+    "NVDA",
+    "GOOG",
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "META",
+    "TSLA",
+    "BRK.A",
+    "JPM",
+    "MU",
+    "XOM",
+    "AMD",
+    "ORCL",
+    "INTC",
+    "PLTR",
+    "MS"
+  ],
+  "alerts": [
+    {
+      "kind": "system",
+      "text": "NVDA probability 56.6%.",
+      "time": "19:47:56"
+    },
+    {
+      "kind": "system",
+      "text": "Started analysis for NVDA.",
+      "time": "19:47:56"
+    },
+    {
+      "kind": "system",
+      "text": "NVDA probability 51.2%; SL $192.99, TP $239.94.",
+      "time": "now"
+    },
+    {
+      "kind": "warning",
+      "text": "Analysis failed: Could not analyze NVDA from live provider data. Check API keys, rate limits, and symbol format.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "Started analysis for NVDA.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "Started analysis for NVDA.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "SPY probability 14.2%; SL $683.78, TP $850.10.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "Started analysis for SPY.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "US live dashboard refresh is manual to preserve Alpha Vantage quota.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "SMH probability 62.3%; SL $553.30, TP $687.88.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "Started analysis for SMH.",
+      "time": "now"
+    },
+    {
+      "kind": "system",
+      "text": "US live dashboard refresh is manual to preserve Alpha Vantage quota.",
+      "time": "now"
+    }
+  ],
+  "saved_at": "2026-06-18T19:47:56"
+}

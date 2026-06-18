@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = [('swing_model_enhanced.pkl', '.'), ('swing_scaler_enhanced.pkl', '.'), ('feature_columns_enhanced.pkl', '.')]
+datas = [('swing_model_enhanced.pkl', '.'), ('swing_scaler_enhanced.pkl', '.'), ('feature_columns_enhanced.pkl', '.'), ('training_stats.pkl', '.')]
 datas += collect_data_files('sklearn')
 
 
@@ -10,11 +10,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=['sklearn.ensemble', 'sklearn.tree', 'sklearn.utils._weight_vector', 'sklearn.neighbors._partition_nodes', 'scipy.special._ufuncs_cxx', 'scipy.linalg.cython_blas', 'scipy.linalg.cython_lapack'],
+    hiddenimports=['PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'sklearn.ensemble', 'sklearn.tree', 'sklearn.utils._weight_vector', 'sklearn.neighbors._partition_nodes', 'scipy.special._ufuncs_cxx', 'scipy.linalg.cython_blas', 'scipy.linalg.cython_lapack'],
     hookspath=['.'],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter'],
     noarchive=False,
     optimize=0,
 )

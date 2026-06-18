@@ -11,6 +11,8 @@ import glob
 import requests
 import time
 import warnings
+import json
+import threading
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -54,9 +56,17 @@ class HybridSwingEnsemble:
         return (rf_importance + xgb_importance) / 2.0
 
 
+if "__main__" in sys.modules and not hasattr(sys.modules["__main__"], "HybridSwingEnsemble"):
+    setattr(sys.modules["__main__"], "HybridSwingEnsemble", HybridSwingEnsemble)
+
+
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE_PATH = os.path.join(PROJECT_ROOT, ".env")
 ENV_EXAMPLE_PATH = os.path.join(PROJECT_ROOT, ".env.example")
+STOCKS_FILE_PATH = os.path.join(PROJECT_ROOT, "stocks.json")
+ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
+ALPHA_VANTAGE_CACHE_TTL_SECONDS = 12 * 60 * 60
+LIVE_MARKET_CACHE_TTL_SECONDS = 15 * 60
 DEFAULT_ENV_CONTENT = (
     "# data.go.kr service key used for Korean market lookups\n"
     "KRX_SERVICE_KEY=replace_with_your_data_go_kr_service_key\n"
@@ -67,61 +77,61 @@ DEFAULT_ENV_CONTENT = (
 KRX_MARKET_ENDPOINTS = {
     "stock": {
         "label": "stock",
-        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getStockPriceInfo",
         "verified": True,
     },
     "security": {
         "label": "beneficiary security",
-        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getSecuritiesPriceInfo",
         "verified": True,
     },
     "warrant_certificate": {
         "label": "preemptive right certificate",
-        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getPreemptiveRightCertificatePriceInfo",
         "verified": True,
     },
     "warrant_security": {
         "label": "preemptive right security",
-        "guide": "오픈API 활용자가이드_금융위원회_주식시세정보.docx",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetStockSecuritiesInfoService/getPreemptiveRightSecuritiesPriceInfo",
         "verified": True,
     },
     "etf": {
         "label": "ETF",
-        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETFPriceInfo",
         "verified": True,
     },
     "etn": {
         "label": "ETN",
-        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETNPriceInfo",
         "verified": True,
     },
     "elw": {
         "label": "ELW",
-        "guide": "data.go.kr 금융위원회_증권상품시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getELWPriceInfo",
         "verified": True,
     },
     "bond": {
         "label": "bond",
-        "guide": "data.go.kr 금융위원회_채권시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetBondSecuritiesInfoService/getBondPriceInfo",
         "verified": True,
     },
     "future": {
         "label": "future",
-        "guide": "data.go.kr 금융위원회_파생상품시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetDerivativesInfoService/getFuturePriceInfo",
         "verified": False,
     },
     "option": {
         "label": "option",
-        "guide": "data.go.kr 금융위원회_파생상품시세정보",
+        "guide": "data.go.kr API guide",
         "url": "https://apis.data.go.kr/1160100/service/GetDerivativesInfoService/getOptionPriceInfo",
         "verified": False,
     },
@@ -297,7 +307,7 @@ class SecurityValidator:
 
     US_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
     KR_SYMBOL_PATTERN = re.compile(
-        r"^(?:(?:STOCK|STOCKS|EQUITY|EQUITIES|SECURITY|SECURITIES|BENEFICIARY|FUND|FUNDS|ETF|ETN|ELW|BOND|BONDS|FUTURE|FUTURES|OPTION|OPTIONS|WARRANT|WARRANTS|CERTIFICATE):)?(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9가-힣 .&()/_-]{1,30})$",
+        r"^(?:(?:STOCK|STOCKS|EQUITY|EQUITIES|SECURITY|SECURITIES|BENEFICIARY|FUND|FUNDS|ETF|ETN|ELW|BOND|BONDS|FUTURE|FUTURES|OPTION|OPTIONS|WARRANT|WARRANTS|CERTIFICATE):)?(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9\uac00-\ud7a3 .&()/_-]{1,30})$",
         re.IGNORECASE,
     )
 
@@ -747,7 +757,7 @@ class SwingTradeTrainer:
         print(f"Training dataset shape: {X.shape}")
         print(f"Swing opportunities: {sum(y)} out of {len(y)} samples ({sum(y)/len(y)*100:.2f}%)")
         if sum(y) < 10:
-            print("⚠️  WARNING: Very few positive samples detected!")
+            print("WARNING: Very few positive samples detected!")
             print("This may lead to poor model performance. Consider:")
             print("- Lowering the swing threshold")
             print("- Using more historical data")
@@ -848,7 +858,7 @@ class SwingTradeDetector:
                 "ALPHA_VANTAGE_API_KEY is required for US market requests. "
                 "Korean market requests use KRX_SERVICE_KEY from data.go.kr."
             )
-        min_interval_seconds = 1.2
+        min_interval_seconds = ALPHA_VANTAGE_MIN_INTERVAL_SECONDS
         elapsed = time.time() - self._last_alpha_vantage_request_ts
         if elapsed < min_interval_seconds:
             time.sleep(min_interval_seconds - elapsed)
@@ -1464,7 +1474,7 @@ class SwingTradeDetector:
         symbol = result['symbol']
         timestamp = result['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
         currency = result.get('currency', 'USD')
-        currency_symbol = '$' if currency == 'USD' else '₩'
+        currency_symbol = '$' if currency == 'USD' else 'KRW '
         print(f"\n{'='*60}")
         print(f"SWING TRADE ANALYSIS: {symbol}")
         print(f"{'='*60}")
@@ -1475,19 +1485,19 @@ class SwingTradeDetector:
         print(f"Volume: {result['current_volume']:,}")
         print(f"")
         if result['is_swing_opportunity']:
-            print(f"🚨 SWING TRADE OPPORTUNITY DETECTED! 🚨")
+            print("SWING TRADE OPPORTUNITY DETECTED")
             print(f"Swing Probability: {result['swing_probability']:.1%}")
             print(f"Confidence Level: {result['confidence_level']}")
             if result['swing_probability'] >= 0.8:
-                print(f"🔥 STRONG BUY SIGNAL")
+                print("STRONG BUY SIGNAL")
             elif result['swing_probability'] >= 0.6:
-                print(f"📈 MODERATE BUY SIGNAL")
+                print("MODERATE BUY SIGNAL")
             else:
-                print(f"⚠️   WEAK BUY SIGNAL")
+                print("WEAK BUY SIGNAL")
             print(f"Recommended Stop-Loss: {currency_symbol}{result['stop_loss']:.2f} {currency}")
             print(f"Recommended Take-Profit: {currency_symbol}{result['take_profit']:.2f} {currency}")
         else:
-            print(f"❌ No swing opportunity detected")
+            print("No swing opportunity detected")
             print(f"No-Swing Probability: {result['no_swing_probability']:.1%}")
             print(f"Confidence Level: {result['confidence_level']}")
         print(f"{'='*60}\n")
@@ -1515,10 +1525,10 @@ class SwingTradeDetector:
                         print(f"Error analyzing {symbol}: {e}")
                         continue
                 if opportunities:
-                    print(f"\n🔔 FOUND {len(opportunities)} HIGH-PROBABILITY OPPORTUNITIES:")
+                    print(f"\nFOUND {len(opportunities)} HIGH-PROBABILITY OPPORTUNITIES:")
                     for opp in sorted(opportunities, key=lambda x: x['swing_probability'], reverse=True):
                         currency = opp.get('currency', 'USD')
-                        sym = '$' if currency == 'USD' else '₩'
+                        sym = '$' if currency == 'USD' else 'KRW '
                         print(f"  {opp['symbol']}: {opp['swing_probability']:.1%} at {sym}{opp['current_price']:.2f} {currency}")
                         print(f"     SL: {sym}{opp['stop_loss']:.2f}, TP: {sym}{opp['take_profit']:.2f}")
                 else:
@@ -1688,11 +1698,11 @@ class SwingTradingSystem:
         try:
             test_score = self.trainer.train(validated_data_directory)
             self.trainer.save_model()
-            print(f"\n✅ Model training completed successfully!")
+            print("\nModel training completed successfully!")
             print(f"Final test score: {test_score:.4f}")
             return test_score
         except Exception as e:
-            print(f"❌ Error during training: {e}")
+            print(f"Error during training: {e}")
             raise
     def initialize_detector(self, stock_mode="KR", model_path="swing_model_enhanced.pkl"):
         if stock_mode == "US" and self.api_key is None:
@@ -1746,6 +1756,79 @@ class SwingTradingSystem:
             self.initialize_detector(stock_mode=validated_mode)
         self.detector.monitor_multiple_symbols(validated_symbols, validated_interval, validated_threshold, validated_mode)
 
+    def load_symbols_from_stocks_file(self, stock_mode="US", stocks_file=STOCKS_FILE_PATH):
+        """Load screener symbols from a single ticker list in stocks.json."""
+        validated_mode = SecurityValidator.validate_choice(stock_mode, "stock_mode", {"US", "KR"})
+        try:
+            with open(stocks_file, "r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except FileNotFoundError:
+            raise SecurityValidationError(f"Could not find stocks file: {stocks_file}")
+        except json.JSONDecodeError as error:
+            raise SecurityValidationError(f"Invalid JSON in stocks file: {error}")
+
+        if isinstance(payload, list):
+            symbols = payload
+        else:
+            raise SecurityValidationError(
+                'stocks.json must be a JSON array, for example: ["005930", "000660", "035420"]'
+            )
+        return SecurityValidator.validate_symbol_list(symbols, validated_mode, self.security_config)
+
+    def screen_symbols(self, symbols, stock_mode="US", request_context=None):
+        """Run a one-time stock screener and print the normal analysis result for each symbol."""
+        try:
+            self._enforce_public_rate_limit(
+                operation="screen_symbols",
+                request_context=request_context,
+                ip_limit=self.security_config.analysis_limit_per_minute,
+                user_limit=self.security_config.analysis_limit_per_user_minute,
+                window_seconds=60,
+            )
+            validated_mode = SecurityValidator.validate_choice(stock_mode, "stock_mode", {"US", "KR"})
+            validated_symbols = SecurityValidator.validate_symbol_list(symbols, validated_mode, self.security_config)
+        except (SecurityValidationError, RateLimitExceededError) as error:
+            return self._handle_security_error(error)
+
+        if self.detector is None:
+            self.initialize_detector(stock_mode=validated_mode)
+
+        print(f"\nStock Screener [{validated_mode}]")
+        print(f"Screening {len(validated_symbols)} symbols from stocks.json...")
+        results = []
+        failures = []
+        for index, symbol in enumerate(validated_symbols, start=1):
+            print(f"\n[{index}/{len(validated_symbols)}] {symbol}")
+            try:
+                result = self.detector.analyze_single_symbol(symbol, validated_mode)
+                if result:
+                    results.append(result)
+                else:
+                    failures.append(symbol)
+            except Exception as error:
+                failures.append(symbol)
+                print(f"Screener failed for {symbol}: {error}")
+            if index < len(validated_symbols):
+                time.sleep(2)
+
+        print(f"\n{'='*60}")
+        print("STOCK SCREENER SUMMARY")
+        print(f"{'='*60}")
+        if results:
+            for result in sorted(results, key=lambda item: item["swing_probability"], reverse=True):
+                recommendation = "BUY" if result["is_swing_opportunity"] else "NO BUY"
+                print(
+                    f"{result['symbol']}: {recommendation} "
+                    f"({result['swing_probability']:.1%} swing probability, "
+                    f"{result['confidence_level']} confidence)"
+                )
+        else:
+            print("No symbols were successfully analyzed.")
+        if failures:
+            print(f"Failed symbols: {', '.join(failures)}")
+        print(f"{'='*60}\n")
+        return results
+
     def run_backtest(self, symbol, days_back=90, stock_mode="US", request_context=None):
         try:
             self._enforce_public_rate_limit(
@@ -1764,100 +1847,43 @@ class SwingTradingSystem:
             self.initialize_detector(stock_mode=validated_mode)
         return self.detector.backtest_strategy(validated_symbol, validated_days, validated_mode)
 
-if __name__ == "__main__":
-    ALPHA_VANTAGE_API_KEY = SecretManager.get_optional_secret("ALPHA_VANTAGE_API_KEY")
-    DATA_DIRECTORY = "./historical_data"
-    system = SwingTradingSystem(api_key=ALPHA_VANTAGE_API_KEY)
-    print("Advanced Swing Trading ML System")
-    print("=" * 50)
-    print("Korean market mode uses data.go.kr through KRX_SERVICE_KEY.")
-    print("US market mode is optional and uses ALPHA_VANTAGE_API_KEY only when provided.")
-    stock_mode = "KR"
-    while True:
-        print("\nSelect an option:")
-        print("1. Train Model")
-        print("2. Analyze Single Symbol")
-        print("3. Monitor Multiple Symbols")
-        print("4. Backtest Strategy")
-        print("5. Change Stock Region (US/KR)")
-        print("6. Exit")
-        try:
-            choice = input("\nEnter your choice (1-6): ").strip()
-            if choice == "1":
-                print("\nTraining new model...")
-                try:
-                    threshold = prompt_float_with_default("Enter swing threshold (default 0.15): ", 0.15, "swing_threshold", 0.01, 1.0)
-                    periods = prompt_int_with_default("Enter lookforward periods (default 10): ", 10, "lookforward_periods", 2, 90)
-                    system.train_model(
-                        data_directory=DATA_DIRECTORY,
-                        swing_threshold=threshold,
-                        lookforward_periods=periods
-                    )
-                except Exception as e:
-                    print(f"Training failed: {e}")
-            elif choice == "2":
-                print(f"\nSingle Symbol Analysis [{stock_mode}]")
-                example_symbol = "005930" if stock_mode == "KR" else "AAPL"
-                symbol = input(f"Enter symbol (e.g., {example_symbol}): ").strip()
-                if symbol:
-                    try:
-                        # Show company name for confirmation
-                        if system.detector is None:
-                            try:
-                                system.initialize_detector(stock_mode=stock_mode)
-                            except Exception:
-                                pass
-                        if system.detector is not None:
-                            company = system.detector.resolve_company_name(symbol, stock_mode)
-                            print(f"Selected: {symbol} - {company}")
-                        result = system.analyze_symbol(symbol, stock_mode)
-                        if not result:
-                            print(f"Could not analyze {symbol}")
-                    except Exception as e:
-                        print(f"Analysis failed: {e}")
-            elif choice == "3":
-                print(f"\nMulti-Symbol Monitoring [{stock_mode}]")
-                example_symbols = "005930,000660,035420" if stock_mode == "KR" else "AAPL,MSFT,GOOGL"
-                symbols_input = input(f"Enter symbols separated by commas (e.g., {example_symbols}): ").strip()
-                if symbols_input:
-                    symbols = [s.strip() for s in symbols_input.split(",") if s.strip()]
-                    try:
-                        interval = prompt_int_with_default("Check interval in seconds (default 300): ", 300, "check_interval", 1, 86400)
-                        threshold = prompt_float_with_default("Alert threshold (default 0.7): ", 0.7, "alert_threshold", 0.0, 1.0)
-                        system.monitor_symbols(symbols, interval, threshold, stock_mode)
-                    except Exception as e:
-                        print(f"Monitoring failed: {e}")
-            elif choice == "4":
-                print("\nStrategy Backtest")
-                example_symbol = "005930" if stock_mode == "KR" else "AAPL"
-                symbol = input(f"Enter symbol for backtest (e.g., {example_symbol}): ").strip()
-                if symbol:
-                    try:
-                        days = prompt_int_with_default("Days to backtest (default 90): ", 90, "backtest_days", 1, 3650)
-                        result = system.run_backtest(symbol, days, stock_mode)
-                        if not result:
-                            print(f"Could not backtest {symbol}")
-                    except Exception as e:
-                        print(f"Backtest failed: {e}")
-            elif choice == "5":
-                if stock_mode == "US":
-                    stock_mode = "KR"
-                    print("\nStock mode changed to Korean Market")
-                    print("Note: Korean market (KR) uses data.go.kr (KRX OpenAPI) for stocks and securities.")
-                    print("Set the required service key in PowerShell with: $env:KRX_SERVICE_KEY='your_key_here'")
-                    print("Or put this in the project `.env` file: KRX_SERVICE_KEY=your_key_here")
-                else:
-                    stock_mode = "US"
-                    print("\nStock mode changed to US Market")
-                    print("US mode requires ALPHA_VANTAGE_API_KEY. Korean mode uses data.go.kr with KRX_SERVICE_KEY.")
-            elif choice == "6":
-                print("\nGoodbye!")
-                break
-            else:
-                print("Invalid choice. Please enter 1-6.")
-        except KeyboardInterrupt:
-            print("\nOperation cancelled by user.")
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-    print("System shutdown complete.")
 
+UI_CONFIG_PATH = os.path.join(PROJECT_ROOT, "trading_ui_config.json")
+MODEL_ARTIFACTS = [
+    ("swing_model_enhanced.pkl", "Trained ensemble classifier"),
+    ("swing_scaler_enhanced.pkl", "Feature scaling pipeline"),
+    ("feature_columns_enhanced.pkl", "Expected model feature list"),
+    ("training_stats.pkl", "Training score metadata"),
+]
+
+COLORS = {
+    "bg": "#F6F7F9",
+    "bg_top": "#FFFFFF",
+    "bg_bottom": "#F1F3F6",
+    "panel": "#FFFFFF",
+    "panel_alt": "#FBFBFC",
+    "border": "#DDE2E8",
+    "shadow": "#D8DDE5",
+    "text": "#15191E",
+    "muted": "#6F7780",
+    "subtle": "#F0F1F3",
+    "teal": "#0F8B8D",
+    "teal_soft": "#E8F5F4",
+    "green": "#147A46",
+    "amber": "#A86E08",
+    "amber_soft": "#FFF7E6",
+    "coral": "#E35D43",
+    "red": "#F51616",
+    "crimson": "#0A6264",
+    "blue": "#345E9E",
+}
+
+
+
+def launch_desktop_app():
+    from qt_trading_ui import launch_qt_app
+
+    return launch_qt_app(sys.modules[__name__])
+
+if __name__ == "__main__":
+    launch_desktop_app()

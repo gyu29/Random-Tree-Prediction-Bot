@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-
 block_cipher = None
 
 a = Analysis(
@@ -13,6 +12,9 @@ a = Analysis(
         ('training_stats.pkl', '.'),
     ],
     hiddenimports=[
+        'PySide6.QtCore',
+        'PySide6.QtGui',
+        'PySide6.QtWidgets',
         'sklearn.ensemble',
         'sklearn.tree',
         'sklearn.utils._weight_vector',
@@ -38,7 +40,7 @@ a = Analysis(
     hookspath=['./'],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['tkinter'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
