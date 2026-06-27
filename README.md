@@ -32,6 +32,8 @@ Random-Tree-Prediction-Bot/
 |-- swing_scaler_enhanced.pkl        # Saved feature scaler
 |-- feature_columns_enhanced.pkl     # Saved model feature list
 |-- training_stats.pkl               # Saved model training metadata
+|-- trading_ui_config.json           # Persisted UI settings (auto-generated)
+|-- krx tickers.txt                  # KRX ticker reference list
 |-- .env.example                     # Example runtime secrets file
 |-- *.spec                           # PyInstaller build specs
 `-- pyinstaller_cmd.txt              # Manual PyInstaller command examples
@@ -259,10 +261,10 @@ If they are missing or out of sync, retrain the model from the `Train model` scr
 
 ## Development Notes
 
-- `swing_trading_system.py` contains most backend logic, including data validation, feature engineering, model training, detection, monitoring, screening, and backtesting.
+- `swing_trading_system.py` contains the backend logic, including data validation, feature engineering, model training, detection, monitoring, screening, and backtesting. It imports `qt_trading_ui` and launches the desktop app.
+- `qt_trading_ui.py` contains the full PySide6 desktop UI and PyQtGraph charts.
 - `download_sp500_data.py` is a separate data-collection utility.
 - `key_tester.py` is a focused diagnostic tool for data.go.kr credentials.
-- The native desktop UI lives in `swing_trading_system.py` alongside the existing service layer.
 - The current repository does not include an automated test suite.
 
 ## Disclaimer

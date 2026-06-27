@@ -1377,6 +1377,7 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         except (TypeError, ValueError):
             number = 0
         return f"${number:,.2f}" if currency == "USD" else f"KRW {number:,.0f}"
+        #should probably use locale formatting here but this is good enough for now
 
 
 def launch_qt_app(backend):
