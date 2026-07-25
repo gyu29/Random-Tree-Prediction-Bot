@@ -337,22 +337,32 @@ class BacktestPage(BasePage):
     def __init__(self, window):
         super().__init__(window, "Backtest")
         self.action_button("Export", window.export_backtest)
+        self.file_path = None
         controls = QtWidgets.QHBoxLayout()
-        self.symbol = QtWidgets.QLineEdit(window.last_symbol)
+        browse = QtWidgets.QPushButton("Choose data file...")
+        browse.clicked.connect(self.browse_file)
+        self.file_label = QtWidgets.QLabel("No file selected")
         self.window_select = QtWidgets.QComboBox()
         self.window_select.addItems(["90 days", "180 days", "1 year", "3 years"])
         self.window_select.setCurrentText("180 days")
         self.threshold = QtWidgets.QComboBox()
-        self.threshold.addItems(["60%", "70%", "80%"])
+        self.threshold.addItems(["50%", "60%", "70%", "80%"])
         self.threshold.setCurrentText("70%")
         run = QtWidgets.QPushButton("Run backtest")
         run.setProperty("primary", True)
         run.clicked.connect(self.run_backtest)
-        controls.addWidget(self.symbol, 1)
+        controls.addWidget(browse)
+        controls.addWidget(self.file_label, 1)
         controls.addWidget(self.window_select)
         controls.addWidget(self.threshold)
         controls.addWidget(run)
         self.root.addLayout(controls)
+
+        self.notice = QtWidgets.QLabel("")
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet(f"color: {window.colors['amber']};")
+        self.notice.setVisible(False)
+        self.root.addWidget(self.notice)
 
         metrics = QtWidgets.QHBoxLayout()
         self.metrics = [
@@ -378,22 +388,42 @@ class BacktestPage(BasePage):
         trades.layout.addWidget(self.trade_table)
         self.root.addWidget(trades)
 
+    def browse_file(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Choose historical data", "", "CSV files (*.csv)"
+        )
+        if path:
+            self.file_path = path
+            symbol = self.window.backend.DataProcessor.infer_symbol_from_path(path).upper()
+            self.file_label.setText(f"{symbol} — {os.path.basename(path)}")
+
     def run_backtest(self):
-        symbol = self.symbol.text().strip().upper()
+        if not self.file_path:
+            QtWidgets.QMessageBox.warning(self, "Backtest", "Choose a data file first.")
+            return
         days = {"90 days": 90, "180 days": 180, "1 year": 365, "3 years": 1095}[self.window_select.currentText()]
         threshold = float(self.threshold.currentText().replace("%", "")) / 100
-        if symbol:
-            self.window.start_backtest(symbol, days, threshold)
+        self.window.start_backtest(self.file_path, days, threshold)
 
     def refresh(self):
         result = self.window.last_backtest
         if not result:
             return
-        self.symbol.setText(result.get("symbol", self.window.last_symbol))
+        symbol = result.get("symbol", self.window.last_symbol)
+        if self.file_path:
+            self.file_label.setText(f"{symbol} — {os.path.basename(self.file_path)}")
+        no_trades_reason = result.get("no_trades_reason")
+        self.notice.setText(no_trades_reason or "")
+        self.notice.setVisible(bool(no_trades_reason))
+        no_trades_color = (
+            self.window.colors["amber"] if no_trades_reason
+            else self.window.colors["teal"] if result.get("total_return", 0) >= 0
+            else self.window.colors["red"]
+        )
         self.metrics[0].update_value(
             self.window.pct(result.get("total_return", 0), signed=True),
             f"{result.get('num_trades', 0)} trades",
-            self.window.colors["teal"] if result.get("total_return", 0) >= 0 else self.window.colors["red"],
+            no_trades_color,
         )
         self.metrics[1].update_value(self.window.pct(result.get("win_rate", 0)), "profitable trades")
         self.metrics[2].update_value(f"{result.get('sharpe', 0):.2f}", "risk adjusted")
@@ -890,17 +920,25 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         self.save_config()
         self.pages["Analyze"].refresh()
 
-    def start_backtest(self, symbol, days, threshold):
-        self.last_symbol = symbol
+    def start_backtest(self, file_path, days, threshold):
         self.run_background(
             "backtest",
-            lambda: self.live_backtest(symbol, days, threshold),
+            lambda: self.live_backtest(file_path, days, threshold),
             self.backtest_ready,
         )
 
     def backtest_ready(self, result):
         self.last_backtest = result
-        self.add_alert("system", f"Backtest completed for {result.get('symbol', self.last_symbol)}.")
+        self.last_symbol = result.get("symbol", self.last_symbol)
+        symbol = result.get("symbol", self.last_symbol)
+        if result.get("no_trades_reason"):
+            self.add_alert(
+                "system",
+                f"Backtest for {symbol} triggered no trades (peak probability "
+                f"{result.get('peak_probability', 0):.0%}). See Backtest page for details.",
+            )
+        else:
+            self.add_alert("system", f"Backtest completed for {symbol}.")
         self.pages["Backtest"].refresh()
 
     def start_training(self, analyze_after=False):
@@ -1021,14 +1059,11 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
             raise ValueError(f"Could not analyze {symbol}. Check API keys and symbol format.")
         return {"result": result, "df": df, "company": self.company_name(symbol), "log": log.getvalue()}
 
-    def live_backtest(self, symbol, days_back, threshold):
-        df = self.fetch_market_history(
-            symbol,
-            self.market_mode,
-            outputsize="full" if self.market_mode == "US" else "compact",
-        )
+    def live_backtest(self, file_path, days_back, threshold):
+        df = self.backend.DataProcessor.load_and_validate_data(file_path)
         if df is None or len(df) < 70:
-            raise ValueError(f"No usable provider history for {symbol}.")
+            raise ValueError(f"Not enough usable history in {os.path.basename(file_path)}.")
+        symbol = self.backend.DataProcessor.infer_symbol_from_path(file_path).upper()
         df_recent = df.tail(days_back).copy()
         with contextlib.redirect_stdout(io.StringIO()):
             detector = self.ensure_detector(self.market_mode)
@@ -1040,6 +1075,8 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         trades = []
         position = None
         equity = [1.0]
+        peak_probability = 0.0
+        lookforward_periods = getattr(detector, "lookforward_periods", 10)
         for index in range(50, len(features) - 10):
             row = features.iloc[index]
             date = features.index[index]
@@ -1055,6 +1092,7 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                     float(row.get("rsi_14", 50)),
                     float(row.get("volume_ratio", 1)),
                 )
+            peak_probability = max(peak_probability, probability)
             if position is None and probability >= threshold:
                 stop, take = detector._calculate_stop_take_profit(
                     price,
@@ -1063,12 +1101,14 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                 )
                 position = {
                     "entry_date": date,
+                    "entry_index": index,
                     "entry_price": price,
                     "entry_probability": probability,
                     "stop_loss": stop,
                     "take_profit": take,
                 }
             elif position is not None:
+                bars_held = index - position["entry_index"]
                 days_held = (date - position["entry_date"]).days
                 profit = (price - position["entry_price"]) / position["entry_price"]
                 reason = None
@@ -1076,7 +1116,7 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                     reason = "Stop-loss"
                 elif price >= position["take_profit"]:
                     reason = "Take-profit"
-                elif days_held >= 10:
+                elif bars_held >= lookforward_periods:
                     reason = "Max time"
                 if reason:
                     trades.append({
@@ -1095,6 +1135,15 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         profits = [trade["profit_pct"] for trade in trades]
         returns = np.asarray(profits or [0.0])
         first = float(df_recent.iloc[0]["close"])
+        no_trades_reason = None
+        if not trades:
+            no_trades_reason = (
+                f"No trades triggered: the model's predicted swing probability for {symbol} peaked at "
+                f"{peak_probability:.0%} in this window, never reaching the {threshold:.0%} decision threshold. "
+                "This is expected for lower-volatility instruments like a broad market index, since the model "
+                "was trained to detect large short-term swings typical of individual growth stocks. Try a lower "
+                "threshold, a longer window, or backtest a more volatile symbol."
+            )
         return {
             "symbol": symbol,
             "trades": trades,
@@ -1105,6 +1154,8 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
             "max_drawdown": self.max_drawdown(equity),
             "equity_curve": equity,
             "buy_hold_curve": [float(price) / first for price in df_recent["close"]] if first else [],
+            "peak_probability": peak_probability,
+            "no_trades_reason": no_trades_reason,
         }
 
     def training_task(self, parameters):

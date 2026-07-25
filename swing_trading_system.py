@@ -689,7 +689,11 @@ class SwingTradeTrainer:
         """Create sophisticated swing trade labels with better balance"""
         df = df.copy()
         price_col = 'adj_close' if 'adj_close' in df.columns else 'close'
-        print(f"Creating swing labels with {self.swing_threshold*100}% threshold over {self.lookforward_periods} periods")
+        adjusted_threshold = max(0.05, self.swing_threshold * 0.5)  # At least 5% or half the configured threshold
+        print(
+            f"Creating swing labels with {adjusted_threshold*100:.2f}% effective threshold "
+            f"(configured swing_threshold={self.swing_threshold*100:.1f}%) over {self.lookforward_periods} periods"
+        )
         df['swing_label'] = 0
         df['swing_profit_potential'] = 0.0
         df['swing_risk'] = 0.0
@@ -701,7 +705,6 @@ class SwingTradeTrainer:
                 min_future_low = future_slice['low'].min()
                 upside_potential = (max_future_high - current_price) / current_price
                 downside_risk = (current_price - min_future_low) / current_price
-                adjusted_threshold = max(0.05, self.swing_threshold * 0.5)  # At least 5% or half the original threshold
                 if upside_potential >= adjusted_threshold:
                     df.iloc[i, df.columns.get_loc('swing_label')] = 1
                     df.iloc[i, df.columns.get_loc('swing_profit_potential')] = upside_potential
@@ -1221,6 +1224,18 @@ class SwingTradeDetector:
                 }
                 response = self._alpha_vantage_get(params, timeout=30)
                 data = response.json()
+                if (
+                    outputsize == "full"
+                    and "Information" in data
+                    and "premium" in data["Information"].lower()
+                ):
+                    print(
+                        f"outputsize=full is a premium-only feature for {symbol}; "
+                        "falling back to outputsize=compact."
+                    )
+                    params["outputsize"] = "compact"
+                    response = self._alpha_vantage_get(params, timeout=30)
+                    data = response.json()
                 if "Error Message" in data:
                     raise ValueError(f"Alpha Vantage API Error: {data['Error Message']}")
                 if "Note" in data:
@@ -1578,12 +1593,14 @@ class SwingTradeDetector:
                     )
                     position = {
                         'entry_date': current_date,
+                        'entry_index': i,
                         'entry_price': current_price,
                         'entry_probability': probability,
                         'stop_loss': stop_loss,
                         'take_profit': take_profit
                     }
                 elif position is not None:
+                    bars_held = i - position['entry_index']
                     days_held = (current_date - position['entry_date']).days
                     profit_pct = (current_price - position['entry_price']) / position['entry_price']
                     exit_reason = None
@@ -1591,7 +1608,7 @@ class SwingTradeDetector:
                         exit_reason = "Stop-Loss"
                     elif current_price >= position['take_profit']:
                         exit_reason = "Take-Profit"
-                    elif days_held >= 10:
+                    elif bars_held >= lookforward_periods:
                         exit_reason = "Max Time"
 
                     if exit_reason:
