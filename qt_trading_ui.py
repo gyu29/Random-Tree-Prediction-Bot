@@ -334,6 +334,11 @@ class MonitorPage(SignalPage):
 
 
 class BacktestPage(BasePage):
+    # (label, days) pairs always available as long as the file has enough history for them.
+    FIXED_TIME_CANDIDATES = [("90 days", 90), ("180 days", 180), ("1 year", 365), ("3 years", 1095)]
+    # Shown before any file is picked, or if the file's date range can't be read.
+    DEFAULT_TIME_OPTIONS = ["90 days", "180 days", "1 year", "3 years", "5 years", "10 years"]
+
     def __init__(self, window):
         super().__init__(window, "Backtest")
         self.action_button("Export", window.export_backtest)
@@ -343,10 +348,10 @@ class BacktestPage(BasePage):
         browse.clicked.connect(self.browse_file)
         self.file_label = QtWidgets.QLabel("No file selected")
         self.window_select = QtWidgets.QComboBox()
-        self.window_select.addItems(["90 days", "180 days", "1 year", "3 years"])
+        self.window_select.addItems(self.DEFAULT_TIME_OPTIONS)
         self.window_select.setCurrentText("180 days")
         self.threshold = QtWidgets.QComboBox()
-        self.threshold.addItems(["50%", "60%", "70%", "80%"])
+        self.threshold.addItems(["5%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%"])
         self.threshold.setCurrentText("70%")
         run = QtWidgets.QPushButton("Run backtest")
         run.setProperty("primary", True)
@@ -396,12 +401,48 @@ class BacktestPage(BasePage):
             self.file_path = path
             symbol = self.window.backend.DataProcessor.infer_symbol_from_path(path).upper()
             self.file_label.setText(f"{symbol} — {os.path.basename(path)}")
+            self.update_time_window_options(path)
+
+    def compute_time_window_options(self, file_path):
+        """Only offer windows the file can actually support, plus 5-year steps up to its full span."""
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                df = self.window.backend.DataProcessor.load_and_validate_data(file_path)
+            span_days = (df.index.max() - df.index.min()).days
+        except Exception:
+            return list(self.DEFAULT_TIME_OPTIONS)
+        options = [label for label, days in self.FIXED_TIME_CANDIDATES if days <= span_days]
+        max_5yr_step = int((span_days / 365.25) // 5) * 5
+        options.extend(f"{years} years" for years in range(5, max_5yr_step + 1, 5))
+        return options or ["90 days"]
+
+    def update_time_window_options(self, file_path):
+        previous = self.window_select.currentText()
+        options = self.compute_time_window_options(file_path)
+        self.window_select.blockSignals(True)
+        self.window_select.clear()
+        self.window_select.addItems(options)
+        if previous in options:
+            self.window_select.setCurrentText(previous)
+        elif "180 days" in options:
+            self.window_select.setCurrentText("180 days")
+        else:
+            self.window_select.setCurrentText(options[-1])
+        self.window_select.blockSignals(False)
+
+    @staticmethod
+    def window_label_to_days(label):
+        fixed = dict(BacktestPage.FIXED_TIME_CANDIDATES)
+        if label in fixed:
+            return fixed[label]
+        years = int(label.split()[0])
+        return years * 365
 
     def run_backtest(self):
         if not self.file_path:
             QtWidgets.QMessageBox.warning(self, "Backtest", "Choose a data file first.")
             return
-        days = {"90 days": 90, "180 days": 180, "1 year": 365, "3 years": 1095}[self.window_select.currentText()]
+        days = self.window_label_to_days(self.window_select.currentText())
         threshold = float(self.threshold.currentText().replace("%", "")) / 100
         self.window.start_backtest(self.file_path, days, threshold)
 
@@ -480,12 +521,12 @@ class TrainPage(BasePage):
         self.max_depth.setRange(3, 10)
         self.max_depth.setValue(6)
         self.swing_window = QtWidgets.QSpinBox()
-        self.swing_window.setRange(3, 20)
-        self.swing_window.setValue(10)
+        self.swing_window.setRange(20, 200)
+        self.swing_window.setValue(window.backend.DEFAULT_LOOKFORWARD_PERIODS)
         self.swing_threshold = QtWidgets.QDoubleSpinBox()
-        self.swing_threshold.setRange(1, 15)
+        self.swing_threshold.setRange(1, 50)
         self.swing_threshold.setSuffix("%")
-        self.swing_threshold.setValue(5)
+        self.swing_threshold.setValue(window.backend.DEFAULT_SWING_THRESHOLD * 100)
         form.addRow("RF estimators", self.rf_estimators)
         form.addRow("XGBoost learning rate", self.learning_rate)
         form.addRow("XGBoost max depth", self.max_depth)
@@ -1061,12 +1102,23 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
 
     def live_backtest(self, file_path, days_back, threshold):
         df = self.backend.DataProcessor.load_and_validate_data(file_path)
-        if df is None or len(df) < 70:
+        if df is None or df.empty:
             raise ValueError(f"Not enough usable history in {os.path.basename(file_path)}.")
         symbol = self.backend.DataProcessor.infer_symbol_from_path(file_path).upper()
-        df_recent = df.tail(days_back).copy()
         with contextlib.redirect_stdout(io.StringIO()):
             detector = self.ensure_detector(self.market_mode)
+        lookforward_periods = getattr(detector, "lookforward_periods", self.backend.DEFAULT_LOOKFORWARD_PERIODS)
+        decision_start = 50
+        min_rows_needed = decision_start + lookforward_periods + 1
+        cutoff = df.index.max() - pd.Timedelta(days=days_back)
+        df_recent = df[df.index >= cutoff].copy()
+        if len(df_recent) < min_rows_needed:
+            raise ValueError(
+                f"Only {len(df_recent)} trading rows in the last {days_back} days for {symbol}; "
+                f"need at least {min_rows_needed} to allow a full {lookforward_periods}-day hold. "
+                "Pick a longer window."
+            )
+        with contextlib.redirect_stdout(io.StringIO()):
             features = self.backend.TechnicalIndicators.create_all_indicators(df_recent)
         features = features.ffill().bfill().replace([np.inf, -np.inf], 0)
         for feature in detector.feature_columns:
@@ -1074,64 +1126,73 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                 features[feature] = 0
         trades = []
         position = None
-        equity = [1.0]
+        realized_equity = 1.0
+        equity = []
         peak_probability = 0.0
-        lookforward_periods = getattr(detector, "lookforward_periods", 10)
-        for index in range(50, len(features) - 10):
+        decision_end = len(features) - lookforward_periods
+        for index in range(len(features)):
             row = features.iloc[index]
             date = features.index[index]
             price = float(row["close"])
-            try:
-                sample = features.iloc[index:index + 1][detector.feature_columns]
-                probability = float(detector.model.predict_proba(detector.scaler.transform(sample))[0][1])
-            except Exception:
-                previous = float(features.iloc[max(0, index - 5)]["close"])
-                momentum = (price - previous) / previous if previous else 0
-                probability = self.fallback_probability(
-                    momentum,
-                    float(row.get("rsi_14", 50)),
-                    float(row.get("volume_ratio", 1)),
-                )
-            peak_probability = max(peak_probability, probability)
-            if position is None and probability >= threshold:
-                stop, take = detector._calculate_stop_take_profit(
-                    price,
-                    float(row.get("atr_14", 0)),
-                    getattr(detector, "swing_threshold", 0.15),
-                )
-                position = {
-                    "entry_date": date,
-                    "entry_index": index,
-                    "entry_price": price,
-                    "entry_probability": probability,
-                    "stop_loss": stop,
-                    "take_profit": take,
-                }
-            elif position is not None:
-                bars_held = index - position["entry_index"]
-                days_held = (date - position["entry_date"]).days
-                profit = (price - position["entry_price"]) / position["entry_price"]
-                reason = None
-                if price <= position["stop_loss"]:
-                    reason = "Stop-loss"
-                elif price >= position["take_profit"]:
-                    reason = "Take-profit"
-                elif bars_held >= lookforward_periods:
-                    reason = "Max time"
-                if reason:
-                    trades.append({
-                        "entry_date": position["entry_date"],
-                        "exit_date": date,
-                        "symbol": symbol,
-                        "entry_price": position["entry_price"],
-                        "exit_price": price,
-                        "days_held": days_held,
-                        "profit_pct": profit,
-                        "entry_probability": position["entry_probability"],
-                        "exit_reason": reason,
-                    })
-                    equity.append(equity[-1] * (1 + profit))
-                    position = None
+            if decision_start <= index < decision_end:
+                try:
+                    sample = features.iloc[index:index + 1][detector.feature_columns]
+                    probability = float(detector.model.predict_proba(detector.scaler.transform(sample))[0][1])
+                except Exception:
+                    previous = float(features.iloc[max(0, index - 5)]["close"])
+                    momentum = (price - previous) / previous if previous else 0
+                    probability = self.fallback_probability(
+                        momentum,
+                        float(row.get("rsi_14", 50)),
+                        float(row.get("volume_ratio", 1)),
+                    )
+                peak_probability = max(peak_probability, probability)
+                if position is None and probability >= threshold:
+                    stop, take = detector._calculate_stop_take_profit(
+                        price,
+                        float(row.get("atr_14", 0)),
+                        getattr(detector, "swing_threshold", self.backend.DEFAULT_SWING_THRESHOLD),
+                    )
+                    position = {
+                        "entry_date": date,
+                        "entry_index": index,
+                        "entry_price": price,
+                        "entry_probability": probability,
+                        "stop_loss": stop,
+                        "take_profit": take,
+                    }
+                elif position is not None:
+                    bars_held = index - position["entry_index"]
+                    days_held = (date - position["entry_date"]).days
+                    profit = (price - position["entry_price"]) / position["entry_price"]
+                    reason = None
+                    if price <= position["stop_loss"]:
+                        reason = "Stop-loss"
+                    elif price >= position["take_profit"]:
+                        reason = "Take-profit"
+                    elif bars_held >= lookforward_periods:
+                        reason = "Max time"
+                    if reason:
+                        trades.append({
+                            "entry_date": position["entry_date"],
+                            "exit_date": date,
+                            "symbol": symbol,
+                            "entry_price": position["entry_price"],
+                            "exit_price": price,
+                            "days_held": days_held,
+                            "profit_pct": profit,
+                            "entry_probability": position["entry_probability"],
+                            "exit_reason": reason,
+                        })
+                        realized_equity *= (1 + profit)
+                        position = None
+            # Mark every day to market (flat when flat, floating P&L while a trade is open) so the
+            # strategy curve lines up point-for-point with the daily buy-and-hold curve below.
+            if position is not None:
+                open_profit = (price - position["entry_price"]) / position["entry_price"]
+                equity.append(realized_equity * (1 + open_profit))
+            else:
+                equity.append(realized_equity)
         profits = [trade["profit_pct"] for trade in trades]
         returns = np.asarray(profits or [0.0])
         first = float(df_recent.iloc[0]["close"])
@@ -1148,7 +1209,7 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
             "symbol": symbol,
             "trades": trades,
             "win_rate": len([profit for profit in profits if profit > 0]) / len(profits) if profits else 0,
-            "total_return": equity[-1] - 1,
+            "total_return": equity[-1] - 1 if equity else 0,
             "num_trades": len(trades),
             "sharpe": float(np.mean(returns) / np.std(returns) * math.sqrt(12)) if np.std(returns) else 0,
             "max_drawdown": self.max_drawdown(equity),
