@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Random Tree Prediction Bot — regime-specific swing-trading research</title>
+<meta name="description" content="Open-source swing-trading research system: eight regime-specific Random Forest + XGBoost ensembles, walk-forward validated, with a native PySide6 desktop terminal.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav>
+  <div class="nav-row">
+    <div class="wordmark"><span class="dot"></span>random-tree-prediction-bot</div>
+    <div class="nav-links">
+      <a href="#models">Models</a>
+      <a href="#rigor">Methodology</a>
+      <a href="#terminal">Terminal</a>
+      <a href="https://github.com/gyu29/Random-Tree-Prediction-Bot" class="btn btn-primary" style="padding:8px 16px;font-size:13.5px;">GitHub &rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-inner">
+    <span class="eyebrow">Open-source &middot; swing-trading research</span>
+    <h1>One model can't read every market.</h1>
+    <p class="hero-sub">Random Tree Prediction Bot trains eight regime-specific ensembles — market beta, growth, credit, rates, and more — and walk-forward validates every one of them before it's trusted with a signal.</p>
+    <div class="hero-ctas">
+      <a href="https://github.com/gyu29/Random-Tree-Prediction-Bot" class="btn btn-primary">View on GitHub</a>
+      <a href="#rigor" class="btn btn-ghost">Read the methodology</a>
+    </div>
+    <div class="hero-tag">education / research only — not financial advice</div>
+  </div>
+  <div class="hero-canvas-wrap">
+    <canvas id="heroCanvas"></canvas>
+    <div class="hero-canvas-legend">
+      <span><i class="legend-swatch" style="background:var(--signal)"></i>predicted probability</span>
+      <span><i class="legend-swatch" style="background:var(--ember)"></i>decision threshold crossed</span>
+    </div>
+  </div>
+</header>
+
+<section class="thesis">
+  <div class="wrap thesis-grid">
+    <div class="reveal">
+      <p class="thesis-quote">A gold ETF and a growth-tech stock don't move for the same reasons — <em>so why score them with the same model?</em></p>
+    </div>
+    <div class="thesis-list reveal">
+      <div class="thesis-item">
+        <span class="thesis-num">01</span>
+        <div><h3>One model, blended regimes</h3><p>A single classifier trained on everything has to average away exactly the differences that make each factor category tradeable on its own terms.</p></div>
+      </div>
+      <div class="thesis-item">
+        <span class="thesis-num">02</span>
+        <div><h3>Eight, instead</h3><p>Each of the 8 categories below gets its own hybrid Random Forest + XGBoost ensemble, trained only on that category's symbols.</p></div>
+      </div>
+      <div class="thesis-item">
+        <span class="thesis-num">03</span>
+        <div><h3>Checked, not assumed</h3><p>Every one is walk-forward validated — see the methodology section for exactly what that does and doesn't prove.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">56 tickers &middot; 8 categories</span>
+      <h2>A model per market regime</h2>
+      <p>Every category is trained on 7 hand-picked, genuinely tradable instruments — no raw yield quotes, no untradeable volatility indices. <span class="mono" style="font-size:13px;">(Both of those were real bugs, caught by running it.)</span></p>
+    </div>
+    <div class="ticker-list" id="tickerList">
+      <div class="ticker-row"><span class="ticker-index">01</span><span class="ticker-name">Market Beta</span><span class="ticker-symbols"><b>SPY</b> <b>VOO</b> <b>VTI</b> ^GSPC +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,20 C10,18 16,8 24,10 S40,22 48,14 S64,4 72,9 S86,16 90,11"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">02</span><span class="ticker-name">Growth / Tech</span><span class="ticker-symbols"><b>QQQ</b> <b>NVDA</b> <b>AAPL</b> XLK +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,22 C8,20 14,17 20,12 S34,2 44,6 S58,18 66,10 S82,2 90,5"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">03</span><span class="ticker-name">Small Cap</span><span class="ticker-symbols"><b>IWM</b> <b>IJR</b> <b>VB</b> ^RUT +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,10 C10,16 18,24 26,20 S42,6 50,10 S66,22 74,16 S86,8 90,12"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">04</span><span class="ticker-name">International / Emerging</span><span class="ticker-symbols"><b>EEM</b> <b>VWO</b> <b>EFA</b> FXI +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,16 C12,14 18,4 28,8 S44,20 54,18 S68,10 76,13 S86,18 90,15"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">05</span><span class="ticker-name">Credit Conditions</span><span class="ticker-symbols"><b>HYG</b> <b>LQD</b> <b>JNK</b> BKLN +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,13 C10,13 20,15 28,14 S46,12 56,13 S72,15 90,13"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">06</span><span class="ticker-name">Rates &amp; Recession</span><span class="ticker-symbols"><b>TLT</b> <b>IEF</b> <b>BIL</b> GOVT +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,8 C10,12 18,22 28,20 S44,10 54,14 S70,24 90,18"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">07</span><span class="ticker-name">Inflation &amp; Safe Haven</span><span class="ticker-symbols"><b>GLD</b> <b>IAU</b> <b>TIP</b> FXY +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,18 C10,16 20,12 30,13 S46,17 56,15 S72,9 90,11"/></svg></div>
+      <div class="ticker-row"><span class="ticker-index">08</span><span class="ticker-name">Energy / Commodity</span><span class="ticker-symbols"><b>XLE</b> <b>USO</b> <b>CVX</b> XOP +3</span><svg class="ticker-spark" viewBox="0 0 90 28"><path d="M0,20 C10,10 18,4 26,9 S40,23 50,20 S66,6 76,10 S86,18 90,14"/></svg></div>
+    </div>
+  </div>
+</section>
+
+<section class="rigor" id="rigor">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Methodology</span>
+      <h2>Built to survive scrutiny</h2>
+      <p>Every threshold and every headline number in this project's own development log was checked against data the model never touched — including a few checks that failed the first time and got fixed, not hidden.</p>
+    </div>
+
+    <div class="reveal">
+      <div class="wf-timeline">
+        <div class="wf-bar" id="wfBar">
+          <div class="wf-seg wf-train"><span>train</span></div>
+          <div class="wf-seg wf-val"><span>val</span></div>
+          <div class="wf-seg wf-test"><span>test</span></div>
+        </div>
+        <div class="wf-caption"><span>oldest data &middot; train 55%</span><span>validation 15%</span><span>test 30% &middot; most recent data</span></div>
+        <p class="wf-note mono">Chronological, per symbol, never shuffled.</p>
+      </div>
+    </div>
+
+    <ul class="rigor-list reveal">
+      <li><h3>Walk-forward, not shuffled</h3><p>Each symbol's history splits chronologically into train / validation / test. Verified: 0 of 56 symbols have any date overlap between splits.</p></li>
+      <li><h3>Thresholds tuned blind to test</h3><p>Each category's decision threshold is selected against validation data only, then confirmed exactly once on test — never chosen by however it happens to score on the number you're about to be shown.</p></li>
+      <li><h3>Every artifact is signed</h3><p>Model files are hash-verified and HMAC-signed before they're ever unpickled. A modified or corrupted model is refused, not silently loaded.</p></li>
+      <li><h3>Labeling logic, checked</h3><p>The vectorized label computation is tested line-for-line against the original loop implementation it replaced, across six parameter combinations, for exact equivalence.</p></li>
+      <li><h3>Fully reproducible</h3><p>Every model's manifest records the exact library versions, hyperparameters, and a hash of every training file used, plus the code's git commit — enough to answer "what exactly produced this model" months later.</p></li>
+      <li><h3>Thread-safe by construction</h3><p>Training, analysis, and backtests all run through one synchronized state object, so a training run finishing can't race with an analysis mid-read of the model it's replacing.</p></li>
+    </ul>
+
+    <div class="caught-panel reveal">
+      <span class="eyebrow" style="color:var(--ember);">Caught in review, not in production</span>
+      <div class="caught-grid">
+        <div class="caught-col caught-before">
+          <div class="caught-label">Before</div>
+          <p><code>rates_recession</code> included <code>^TNX</code> and <code>^IRX</code> — Treasury <em>yield</em> quotes, not prices. <code>^IRX</code> went briefly negative in 2020, a real event. Computing a percentage return against a near-zero "price" produced, for that one category:</p>
+          <div class="caught-number">&minus;164,000,000,000%</div>
+          <p class="caught-sub">a reported compounded return</p>
+        </div>
+        <div class="caught-col caught-after">
+          <div class="caught-label">After</div>
+          <p>Swapped for <code>BIL</code> and <code>GOVT</code> — real, tradable ETFs. Same category, same methodology, data rebuilt, model retrained:</p>
+          <div class="caught-number">bounded, sane results</div>
+          <p class="caught-sub">every number in the category is now within a plausible range</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="terminal">
+  <div class="wrap">
+    <div class="section-head center reveal">
+      <span class="eyebrow">Desktop terminal</span>
+      <h2>A native trading terminal, not a browser tab</h2>
+      <p>PySide6 desktop app. KR and US markets. Live monitoring, screening, and walk-forward backtesting, all running through Qt's own thread pool.</p>
+    </div>
+    <div class="terminal-frame reveal">
+      <div class="terminal-chrome"><i></i><i></i><i></i><span>random-tree-prediction-bot &mdash; terminal</span></div>
+      <div class="terminal-body">
+        <div class="terminal-side">
+          <button class="item active" data-panel="home" type="button">Home</button>
+          <button class="item" data-panel="analyze" type="button">Analyze</button>
+          <div class="item disabled">Monitor</div>
+          <button class="item" data-panel="backtest" type="button">Backtest</button>
+          <div class="item disabled">Screener</div>
+          <div class="item disabled">Train model</div>
+          <div class="item disabled">Settings</div>
+        </div>
+        <div class="terminal-main">
+
+          <div class="terminal-panel active" data-panel-content="home">
+            <div class="terminal-stat-row">
+              <div class="terminal-stat"><div class="k">Models trained</div><div class="v">8 / 8</div></div>
+              <div class="terminal-stat"><div class="k">Avg. probability</div><div class="v">0.14</div></div>
+              <div class="terminal-stat"><div class="k">Watchlist</div><div class="v">12 symbols</div></div>
+            </div>
+            <div class="terminal-list-row"><span class="sym">NVDA &middot; growth_tech</span><span class="p-up">0.61</span></div>
+            <div class="terminal-list-row"><span class="sym">TLT &middot; rates_recession</span><span class="p-flat">0.08</span></div>
+            <div class="terminal-list-row"><span class="sym">GLD &middot; inflation_safe_haven</span><span class="p-flat">0.05</span></div>
+            <div class="terminal-list-row"><span class="sym">IWM &middot; small_cap</span><span class="p-up">0.55</span></div>
+          </div>
+
+          <div class="terminal-panel" data-panel-content="analyze">
+            <div class="analyze-head">
+              <div class="analyze-sym">NVDA <span class="analyze-cat">growth_tech</span></div>
+              <div class="analyze-price">$187.42 <span class="p-up">+2.1%</span></div>
+            </div>
+            <div class="terminal-stat-row">
+              <div class="terminal-stat"><div class="k">Swing probability</div><div class="v v-up">0.61</div></div>
+              <div class="terminal-stat"><div class="k">Confidence</div><div class="v">Medium</div></div>
+            </div>
+            <div class="terminal-stat-row">
+              <div class="terminal-stat"><div class="k">Stop-loss</div><div class="v v-down small">$171.20</div></div>
+              <div class="terminal-stat"><div class="k">Take-profit</div><div class="v v-up small">$215.53</div></div>
+            </div>
+          </div>
+
+          <div class="terminal-panel" data-panel-content="backtest">
+            <div class="terminal-stat-row">
+              <div class="terminal-stat"><div class="k">Total return</div><div class="v v-up small">+58.2%</div></div>
+              <div class="terminal-stat"><div class="k">Win rate</div><div class="v small">70%</div></div>
+              <div class="terminal-stat"><div class="k">Sharpe</div><div class="v small">1.90</div></div>
+            </div>
+            <svg class="backtest-equity" viewBox="0 0 400 90" preserveAspectRatio="none">
+              <polyline class="equity-fill" points="0,80 40,75 80,78 120,60 160,64 200,40 240,45 280,25 320,30 360,10 400,15 400,90 0,90"></polyline>
+              <polyline class="equity-line" points="0,80 40,75 80,78 120,60 160,64 200,40 240,45 280,25 320,30 360,10 400,15"></polyline>
+              <circle class="equity-dot" cx="400" cy="15" r="4"></circle>
+            </svg>
+            <div class="trade-row trade-head"><span>Exit</span><span>Symbol</span><span>P&amp;L</span></div>
+            <div class="trade-row"><span class="mono">Jul 14</span><span class="sym">NVDA</span><span class="p-up">+15.8%</span></div>
+            <div class="trade-row"><span class="mono">Jun 02</span><span class="sym">AAPL</span><span class="p-up">+4.4%</span></div>
+            <div class="trade-row"><span class="mono">Apr 28</span><span class="sym">QQQ</span><span class="p-flat">&minus;1.2%</span></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    <div class="terminal-caption">illustrative layout, not live market data &middot; click Home / Analyze / Backtest above</div>
+  </div>
+</section>
+
+<section class="start">
+  <div class="wrap start-grid">
+    <div class="reveal">
+      <span class="eyebrow">Get started</span>
+      <h2 style="font-size:32px;font-weight:600;margin-top:14px;">Clone it, train it, run it.</h2>
+      <p style="color:var(--text-soft);margin-top:14px;font-size:16px;line-height:1.6;">Everything above is real, working code — not a pitch deck. Clone the repo, build the datasets, and the same walk-forward pipeline runs on your machine.</p>
+      <div class="hero-ctas" style="justify-content:flex-start;margin-top:26px;">
+        <a href="https://github.com/gyu29/Random-Tree-Prediction-Bot" class="btn btn-primary">View on GitHub</a>
+      </div>
+    </div>
+    <div class="code-block reveal"><span class="c1"># clone and enter the project</span>
+<span class="c2">git</span> <span class="c3">clone https://github.com/gyu29/Random-Tree-Prediction-Bot.git</span>
+<span class="c2">cd</span> <span class="c3">Random-Tree-Prediction-Bot</span>
+
+<span class="c1"># install dependencies</span>
+<span class="c2">pip</span> <span class="c3">install pandas numpy scikit-learn ta joblib \
+    requests xgboost yfinance PySide6 pyqtgraph defusedxml</span>
+
+<span class="c1"># build the train / validation / test datasets</span>
+<span class="c2">python</span> <span class="c3">scripts/build_factor_datasets.py</span>
+
+<span class="c1"># launch the desktop terminal</span>
+<span class="c2">python</span> <span class="c3">main.py</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="disclaimer-box">
+      <b>This is experimental trading-research software, for education and research only.</b> It is not financial advice and should not be used as the sole basis for real trading decisions. Markets are noisy, APIs can fail, and machine-learning predictions can be wrong. Always validate results independently and never risk money you cannot afford to lose.
+    </div>
+    <div class="footer-grid">
+      <div class="footer-note">random-tree-prediction-bot &middot; open source</div>
+      <div class="footer-links">
+        <a href="https://github.com/gyu29/Random-Tree-Prediction-Bot">GitHub</a>
+        <a href="#models">Models</a>
+        <a href="#rigor">Methodology</a>
+        <a href="#terminal">Terminal</a>
+      </div>
+    </div>
+  </div>
+</footer>
+<script src="script.js" defer></script>
+</body>
+</html>

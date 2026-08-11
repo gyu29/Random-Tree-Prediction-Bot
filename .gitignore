@@ -1,0 +1,22 @@
+.DS_Store
+**/.DS_Store
+
+__pycache__/
+.codex_pycache/
+*.pyc
+.env
+.env.*
+!.env.example
+
+wf_model_*.pkl
+
+# Regeneratable market data (rebuild with scripts/build_factor_datasets.py)
+/train/
+/validation/
+/test/
+
+# Trained model artifacts (rebuild with scripts/train_all_categories.py)
+/models/
+
+trading_ui_config.json
+

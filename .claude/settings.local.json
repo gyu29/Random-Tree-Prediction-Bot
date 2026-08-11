@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version)",
+      "Bash(pip3 list *)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 show *)"
+    ]
+  },
+
+  "attribution": {
+    "commit": false
+  }
+}
