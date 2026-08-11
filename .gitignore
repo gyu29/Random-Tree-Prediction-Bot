@@ -20,3 +20,8 @@ wf_model_*.pkl
 
 trading_ui_config.json
 
+# Claude Code local config, not project source
+.gitignore
+CLAUDE.MD
+.claude/
+
