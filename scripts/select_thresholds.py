@@ -1,12 +1,3 @@
-"""Selects decision_threshold per category using validation/ only, then confirms the
-choice exactly once against test/ -- the two-step process the earlier test-set threshold
-sweep skipped (see app/trainer.py's module docstring, and the caveats in the walk-forward
-backtest report from this same session).
-
-validation/ is picked over: it's never used to fit the model (only train/ is) and it's
-chronologically before test/, so searching over it doesn't touch the one slice meant to
-answer "how would this actually perform going forward."
-"""
 import os
 import sys
 

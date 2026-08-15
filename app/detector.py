@@ -1,22 +1,3 @@
-"""Inference and walk-forward backtesting for a single category's model.
-
-Error-handling philosophy (this is the fix for the original silent
-fake-probability bug): there are exactly two states a caller needs to be able
-to tell apart, and they are different exception types on purpose --
-
-  NoModelAvailableError  Legitimate, expected: nothing has been trained for this
-                         category yet. Callers MAY offer a clearly-labeled
-                         heuristic estimate in this case (see ui/tasks.py).
-  PredictionError        A model exists but prediction itself raised (feature
-                         mismatch, scaler error, etc). This is a real bug and
-                         must surface as a real error -- never caught here and
-                         quietly replaced with a plausible-looking number.
-
-The walk-forward backtest below deliberately does NOT wrap the per-bar
-prediction call in a try/except: a prediction failure aborts the backtest with
-the real error, because a backtest that silently swaps in heuristic trades
-isn't testing the model anymore.
-"""
 import math
 
 import numpy as np

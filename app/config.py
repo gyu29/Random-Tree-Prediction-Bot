@@ -1,4 +1,3 @@
-"""Paths, constants, and .env handling shared across the app package."""
 import os
 import sys
 

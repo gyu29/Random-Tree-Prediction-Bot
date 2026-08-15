@@ -1,4 +1,3 @@
-"""CSV loading/validation and the train/test factor-category directory layout."""
 import glob
 import os
 

@@ -1,15 +1,3 @@
-"""Builds the train/, validation/, and test/ factor-model datasets from Yahoo Finance.
-
-Replaces download_sp500_data.py. For every symbol in FACTOR_CATEGORIES, downloads full
-history and splits it *per symbol, chronologically* into three pieces: the oldest
-TRAIN_FRACTION goes to train/<category>/<symbol>.csv (the only data models are ever
-fit on), the next VALIDATION_FRACTION goes to validation/<category>/<symbol>.csv (for
-choosing things like decision_threshold -- see scripts/select_thresholds.py -- without
-touching test), and the newest remainder goes to test/<category>/<symbol>.csv (touched
-exactly once, to report final performance of whatever was chosen using train+validation
-alone). Because the split is chronological per symbol, train < validation < test in
-time for every symbol -- a walk-forward split, not a random one.
-"""
 import os
 import sys
 
