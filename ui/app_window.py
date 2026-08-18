@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     import pyqtgraph as pg
@@ -32,13 +32,17 @@ PAGE_NAMES = ["Home", "Analyze", "Monitor", "Backtest", "Screener", "Train model
 DEFAULT_KR_SYMBOL = "005930"  # Samsung Electronics
 DEFAULT_US_SYMBOL = "AAPL"
 
+FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+
+# Same dark palette as docs/index.html's dark theme (styles.css), so the desktop terminal
+# and the promotional site read as the same product instead of two different designs.
 COLORS = {
-    "bg": "#F6F7F9", "bg_top": "#FFFFFF", "bg_bottom": "#F1F3F6",
-    "panel": "#FFFFFF", "panel_alt": "#FBFBFC", "border": "#DDE2E8", "shadow": "#D8DDE5",
-    "text": "#15191E", "muted": "#6F7780", "subtle": "#F0F1F3",
-    "teal": "#0F8B8D", "teal_soft": "#E8F5F4", "green": "#147A46",
-    "amber": "#A86E08", "amber_soft": "#FFF7E6", "coral": "#E35D43",
-    "red": "#F51616", "crimson": "#0A6264", "blue": "#345E9E",
+    "bg": "#0A0E0B", "bg_top": "#10140F", "bg_bottom": "#0A0E0B",
+    "panel": "#141A16", "panel_alt": "#1C231D", "border": "#263025", "shadow": "#000000",
+    "text": "#EAEDE4", "muted": "#9BA396", "subtle": "#20281F",
+    "teal": "#39CDBE", "teal_soft": "#14302C", "green": "#4FBE82",
+    "amber": "#E8A23D", "amber_soft": "#2E2415", "coral": "#E2695C",
+    "red": "#E2695C", "crimson": "#0E7A70", "blue": "#5B8FD6",
 }
 
 
@@ -148,11 +152,13 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
 
     def apply_theme(self):
         pg.setConfigOptions(antialias=True, background=self.colors["panel"], foreground=self.colors["muted"])
+        mono = '"IBM Plex Mono", Menlo, Consolas, monospace'
+        serif = '"Spectral", Georgia, serif'
         self.setStyleSheet(f"""
             QMainWindow, QWidget {{
                 background: {self.colors["bg"]};
                 color: {self.colors["text"]};
-                font-family: "Segoe UI";
+                font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
                 font-size: 13px;
             }}
             QFrame#sidebar {{
@@ -164,10 +170,10 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                 border: 1px solid {self.colors["border"]};
                 border-radius: 12px;
             }}
-            QLabel#brand {{ font-size: 17px; font-weight: 600; color: {self.colors["teal"]}; }}
-            QLabel#pageTitle {{ font-size: 23px; font-weight: 600; }}
+            QLabel#brand {{ font-family: {mono}; font-size: 16px; font-weight: 500; color: {self.colors["text"]}; }}
+            QLabel#pageTitle {{ font-family: {serif}; font-size: 24px; font-weight: 600; }}
             QLabel#cardTitle {{ font-size: 14px; font-weight: 600; }}
-            QLabel#metricValue {{ font-size: 22px; font-weight: 600; }}
+            QLabel#metricValue {{ font-family: {mono}; font-size: 22px; font-weight: 500; }}
             QLabel#muted {{ color: {self.colors["muted"]}; }}
             QPushButton {{
                 background: {self.colors["panel_alt"]};
@@ -177,19 +183,22 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
             }}
             QPushButton:hover {{ background: {self.colors["subtle"]}; }}
             QPushButton[primary="true"] {{
-                color: white;
+                color: {self.colors["bg"]};
                 background: {self.colors["teal"]};
                 border-color: {self.colors["teal"]};
+                font-weight: 600;
             }}
             QPushButton[nav="true"] {{
                 text-align: left;
                 border: none;
+                border-left: 3px solid transparent;
                 padding: 10px 12px;
                 color: {self.colors["muted"]};
             }}
             QPushButton[nav="true"]:checked {{
                 color: {self.colors["teal"]};
                 background: {self.colors["teal_soft"]};
+                border-left: 3px solid {self.colors["teal"]};
                 font-weight: 600;
             }}
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QListWidget, QTableWidget {{
@@ -198,7 +207,9 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
                 border-radius: 7px;
                 padding: 6px;
                 selection-background-color: {self.colors["teal"]};
+                selection-color: {self.colors["bg"]};
             }}
+            QTableWidget {{ font-family: {mono}; gridline-color: {self.colors["border"]}; }}
             QHeaderView::section {{
                 background: {self.colors["panel_alt"]};
                 color: {self.colors["muted"]};
@@ -520,10 +531,25 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         return f"${number:,.2f}" if currency == "USD" else f"KRW {number:,.0f}"
 
 
+def load_fonts():
+    """Registers the same typefaces docs/index.html embeds (IBM Plex Sans/Mono,
+    Spectral) so the desktop terminal and the promotional site match instead of one
+    of them silently falling back to a generic system font. Missing/unreadable files
+    are skipped rather than raised -- a font that fails to load just means apply_theme's
+    "IBM Plex Sans"/"IBM Plex Mono"/"Spectral" QSS references fall back to the next
+    family in their chain, not a crash."""
+    if not os.path.isdir(FONTS_DIR):
+        return
+    for filename in os.listdir(FONTS_DIR):
+        if filename.lower().endswith((".ttf", ".otf")):
+            QtGui.QFontDatabase.addApplicationFont(os.path.join(FONTS_DIR, filename))
+
+
 def launch_qt_app():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Random Tree Bot")
     app.setStyle("Fusion")
+    load_fonts()
     window = TradingTerminalWindow()
     window.show()
     return app.exec()
