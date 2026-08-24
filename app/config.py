@@ -66,6 +66,34 @@ SYMBOL_TO_CATEGORY = {
     for symbol in symbols
 }
 
+# Per-category overrides for swing_threshold and decision_threshold, calibrated against
+# a real train/validation/test evaluation rather than guessed (see
+# MODEL_CALIBRATION_FINDINGS.md for the full investigation and numbers). The uniform
+# DEFAULT_SWING_THRESHOLD (0.15) turned out miscalibrated for lower-volatility
+# categories -- e.g. credit_conditions had so few genuine 15%-in-10-days moves that its
+# model never once reached a usable decision_threshold on the entire test set. A
+# category absent from either dict just uses the global default -- energy_commodity
+# needed neither override. scripts/train_all_categories.py applies both automatically,
+# so a fresh clone (with freshly-fetched data) reproduces this calibration rather than
+# silently retraining everything back to the uncalibrated defaults.
+CALIBRATED_SWING_THRESHOLDS = {
+    "credit_conditions": 0.05,
+    "rates_recession": 0.05,
+    "inflation_safe_haven": 0.07,
+    "small_cap": 0.08,
+    "international_emerging": 0.09,
+    "market_beta": 0.08,
+}
+CALIBRATED_DECISION_THRESHOLDS = {
+    "credit_conditions": 0.10,
+    "rates_recession": 0.45,
+    "inflation_safe_haven": 0.40,
+    "small_cap": 0.40,
+    "international_emerging": 0.10,
+    "market_beta": 0.10,
+    "growth_tech": 0.70,
+}
+
 KRX_MARKET_ENDPOINTS = {
     "stock": {
         "label": "stock",

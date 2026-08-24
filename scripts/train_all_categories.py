@@ -16,6 +16,12 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app import model_registry  # noqa: E402
+from app.config import (  # noqa: E402
+    CALIBRATED_DECISION_THRESHOLDS,
+    CALIBRATED_SWING_THRESHOLDS,
+    DEFAULT_SWING_THRESHOLD,
+)
 from app.data_loader import DataProcessor, category_test_dir, list_categories  # noqa: E402
 from app.detector import NoModelAvailableError, SwingTradeDetector, walk_forward_backtest  # noqa: E402
 from app.market_data.alpha_vantage_provider import AlphaVantageProvider  # noqa: E402
@@ -60,13 +66,20 @@ def evaluate_on_test_split(category, detector):
 
 def train_and_evaluate_category(system, category):
     print(f"\n{'=' * 70}\n{category}\n{'=' * 70}")
+    swing_threshold = CALIBRATED_SWING_THRESHOLDS.get(category, DEFAULT_SWING_THRESHOLD)
     start = time.time()
-    train_result = system.train_model(category)
+    train_result = system.train_model(category, swing_threshold=swing_threshold)
     elapsed = time.time() - start
     stats = train_result["training_stats"]
-    print(f"Trained in {elapsed:.1f}s | validation_score={train_result['validation_score']:.4f} "
+    print(f"Trained in {elapsed:.1f}s | swing_threshold={swing_threshold:.0%} "
+          f"| validation_score={train_result['validation_score']:.4f} "
           f"| scale_pos_weight={stats['scale_pos_weight']:.2f} "
           f"| effective_swing_threshold={stats['effective_swing_threshold']:.2%}")
+
+    if category in CALIBRATED_DECISION_THRESHOLDS:
+        decision_threshold = CALIBRATED_DECISION_THRESHOLDS[category]
+        model_registry.update_decision_threshold(category, decision_threshold)
+        print(f"Applied calibrated decision_threshold={decision_threshold:.0%} (see MODEL_CALIBRATION_FINDINGS.md)")
 
     # Fresh detector loaded straight from the signed manifest, exactly like a real user's
     # session would -- this also exercises the integrity check end to end.
@@ -88,6 +101,8 @@ def train_and_evaluate_category(system, category):
 
     return {
         "category": category,
+        "swing_threshold": swing_threshold,
+        "decision_threshold": detector.decision_threshold,
         "validation_score": train_result["validation_score"],
         "scale_pos_weight": stats["scale_pos_weight"],
         "test_trades": combined["num_trades"],

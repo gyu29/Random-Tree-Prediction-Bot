@@ -111,4 +111,8 @@ Six of eight categories now trade on a real sample size (39–288 trades) with w
 
 ## Reproducing this
 
-The sweep/retrain/stability-search scripts used for this investigation were ad hoc and run from a scratch directory, not committed to `scripts/`. The methodology is fully described above; if this becomes a recurring workflow, the stability-aware search (section 4) would be worth formalizing as a real script alongside `scripts/select_thresholds.py`.
+`scripts/train_all_categories.py` now applies the calibrated `swing_threshold` and `decision_threshold` values from this document automatically, via `app.config.CALIBRATED_SWING_THRESHOLDS` / `CALIBRATED_DECISION_THRESHOLDS` -- so `python scripts/train_all_categories.py` on a fresh clone reproduces this calibration rather than the original uncalibrated defaults. Verified end-to-end: rerunning it against this machine's existing `train/`/`validation/`/`test/` data reproduced identical trade counts and win rates for every category (fixed `random_state=42` on unchanged input data).
+
+What still won't match a fresh clone exactly: `scripts/build_factor_datasets.py` fetches live from Yahoo Finance whenever it's run, so a later run trains on a longer/different history than what produced the specific numbers in section 5, even with the calibration now applied automatically.
+
+The sweep and stability-search scripts used to *derive* these specific numbers (sections 3–4) were ad hoc and run from a scratch directory, not committed to `scripts/`. The methodology is fully described above; if recalibrating again becomes a recurring workflow, the stability-aware search would be worth formalizing as a real script alongside `scripts/select_thresholds.py`.
