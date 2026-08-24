@@ -3,9 +3,9 @@ for every public operation) and RequestRateLimiter (the sliding-window limiter).
 This is the layer that's supposed to reject malformed/malicious input and throttle
 abuse before it reaches anything else, so it's tested for the failure-shaped inputs
 that class of code tends to get wrong quietly rather than loudly: bool sneaking
-through as an int, NaN sneaking through a naive range check, a length limit that
-looks config-driven but is actually a separate hardcoded regex bound, and sliding
--window boundaries that are off by one.
+through as an int, NaN sneaking through a naive range check, a symbol length limit
+that has to actually come from SecurityConfig rather than a second, separately
+-hardcoded regex bound, and sliding-window boundaries that are off by one.
 
 fake_clock replaces app.security's `time` module reference with a controllable
 stand-in so RequestRateLimiter's window math can be driven to exact timestamps
@@ -114,17 +114,15 @@ def test_validate_symbol_us_rejects_symbol_one_over_max_length():
         SecurityValidator.validate_symbol("A" * 16, "US", SecurityConfig())
 
 
-def test_symbol_length_bound_is_hardcoded_in_the_regex_not_driven_by_config():
-    """US_SYMBOL_PATTERN's {0,14} bound (15 chars total) is a separate constant from
-    SecurityConfig.max_symbol_length -- they only agree because both currently say 15.
-    Raising max_symbol_length alone would not actually raise what's enforced: sanitize
-    _text would let the longer string through, but the regex would still reject it
-    (with a different error -- format, not length) unless it's updated too."""
+def test_symbol_length_bound_is_driven_by_config_not_hardcoded_in_the_regex():
+    """US_SYMBOL_PATTERN has no length bound of its own -- sanitize_text's max_length
+    (security_config.max_symbol_length) is the only place length is enforced, so
+    raising max_symbol_length actually raises what's allowed instead of running into
+    a second, separately-hardcoded regex limit."""
     generous_config = SecurityConfig(max_symbol_length=20)
-    long_symbol = "A" * 18  # under the raised config limit, over the regex's fixed bound
+    long_symbol = "A" * 18  # over the old regex's fixed 15-char bound, under the raised config limit
 
-    with pytest.raises(SecurityValidationError, match="Invalid US symbol format"):
-        SecurityValidator.validate_symbol(long_symbol, "US", generous_config)
+    assert SecurityValidator.validate_symbol(long_symbol, "US", generous_config) == long_symbol
 
 
 # ---------------------------------------------------------------------------

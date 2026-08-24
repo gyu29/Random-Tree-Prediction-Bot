@@ -93,7 +93,10 @@ class RequestRateLimiter:
 class SecurityValidator:
     """Schema-style validators and sanitizers for all user-controlled input."""
 
-    US_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,14}$")
+    # No length bound here -- sanitize_text's max_length (security_config.max_symbol_length
+    # for US mode, see validate_symbol) is the one place symbol length is enforced, so this
+    # only has to check character shape, not duplicate the config's length limit.
+    US_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]*$")
     KR_SYMBOL_PATTERN = re.compile(
         r"^(?:(?:STOCK|STOCKS|EQUITY|EQUITIES|SECURITY|SECURITIES|BENEFICIARY|FUND|FUNDS|ETF|ETN|ELW|BOND|BONDS|FUTURE|FUTURES|OPTION|OPTIONS|WARRANT|WARRANTS|CERTIFICATE):)?(?:[0-9]{6}|KR[A-Z0-9]{8,10}|[A-Z0-9가-힣 .&()/_-]{1,30})$",
         re.IGNORECASE,
