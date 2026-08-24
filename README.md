@@ -44,7 +44,9 @@ Random-Tree-Prediction-Bot/
 |   |-- train_all_categories.py      # Trains + evaluates all 8 categories
 |   `-- select_thresholds.py         # Picks decision_threshold per category on validation/
 |-- tests/
-|   `-- test_labeling.py             # Vectorized-vs-loop labeling equivalence
+|   |-- test_labeling.py             # Vectorized-vs-loop labeling equivalence
+|   |-- test_model_registry.py       # save/load signature + tamper/corruption rejection
+|   `-- test_detector.py             # walk_forward_backtest entry/exit/equity logic
 |-- train/<category>/<symbol>.csv        # Oldest 55% per symbol (generated) -- the only
 |                                         # data any model is ever fit on
 |-- validation/<category>/<symbol>.csv   # Next 15% per symbol (generated) -- for choosing
@@ -78,10 +80,10 @@ Random-Tree-Prediction-Bot/
 Install the Python packages used by the scripts:
 
 ```bash
-pip install pandas numpy scikit-learn ta joblib requests xgboost yfinance PySide6 pyqtgraph defusedxml pyinstaller
+pip install -r requirements.txt
 ```
 
-`xgboost` is required for training. `yfinance` is only needed when running `scripts/build_factor_datasets.py`. `defusedxml` is used to parse KRX API responses safely. `pyinstaller` is only needed when building an executable.
+`requirements.txt` pins exact versions (see the comment at its top for why -- it mirrors the same reproducibility reasoning as model manifests). `xgboost` is required for training. `yfinance` is only needed when running `scripts/build_factor_datasets.py`. `defusedxml` is used to parse KRX API responses safely. `pytest` is only needed to run `tests/`. `pyinstaller` is only needed when building an executable.
 
 ## Configuration
 
@@ -233,7 +235,7 @@ Confirm `models/<category>/` exists and contains all five files listed above. If
 - `ui/` contains the PySide6 desktop UI, split into state/widgets/tasks/pages.
 - `qt_trading_ui.py` is now a thin compatibility shim over `ui.app_window`; `main.py` is the primary entry point.
 - `key_tester.py` remains an intentionally standalone diagnostic tool for data.go.kr credentials (no dependency on `app/`, so it still works if the main app doesn't import).
-- `tests/test_labeling.py` verifies the vectorized label implementation against the original row-by-row loop it replaced.
+- `tests/test_labeling.py` verifies the vectorized label implementation against the original row-by-row loop it replaced. `tests/test_model_registry.py` covers save/load's signature and per-artifact hash verification, including that tampering, corruption, or a changed `MODEL_SIGNING_KEY` are rejected rather than silently loaded. `tests/test_detector.py` covers `walk_forward_backtest`'s entry/exit/equity simulation (stop-loss, take-profit, max-time exits, and the decision-window boundary) using a fake model/scaler so trade-triggering bars are deterministic instead of depending on what a real trained ensemble predicts. Run with `pytest tests/`.
 - `app/detector.py`'s `walk_forward_backtest` batches its probability predictions once per call rather than per bar; this matters more than it sounds like it should, since a naive per-bar implementation is slow enough on a large symbol's history to make routine re-evaluation (`train_all_categories.py`, `select_thresholds.py`) impractical.
 - `docs/` is an unrelated promotional page: `index.html` + `styles.css` + `script.js` + `fonts/*.woff2`, no build step, no third-party requests (fonts are vendored locally, not loaded from a font CDN). Open `docs/index.html` directly in a browser, or point GitHub Pages at the `docs/` folder to host it. It isn't part of the application and imports nothing from `app/`/`ui/`.
 
