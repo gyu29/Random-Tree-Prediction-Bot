@@ -151,6 +151,8 @@ python scripts/select_thresholds.py
 
 For each category, this sweeps candidate thresholds against `validation/` only, picks the one with the best pooled Sharpe (requiring at least 5 trades to trust the pick over the existing default), then reports that threshold's performance on both validation and `test/` side by side -- the honest check of whether it actually holds up on data the selection process never saw. In practice this is a mixed bag: it improved risk-adjusted performance for some categories and made others worse, including one case where a validation-selected threshold that looked reasonable on validation lost money on test. Read the printed comparison before trusting any single category's number.
 
+See [MODEL_CALIBRATION_FINDINGS.md](MODEL_CALIBRATION_FINDINGS.md) for a worked example of this failure mode across all 8 categories -- why four of them were trading zero times at all, a stricter validation/test-agreement search than this script's own selection rule, and the category-appropriate `swing_threshold` retrain that ended up fixing most of them.
+
 To apply a threshold you've decided to keep, without retraining (the RF/XGBoost trees don't depend on it):
 
 ```python
