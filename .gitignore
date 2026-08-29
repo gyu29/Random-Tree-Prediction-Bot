@@ -25,3 +25,6 @@ trading_ui_config.json
 CLAUDE.MD
 .claude/
 
+
+# Cached market context series (rebuild with scripts/build_factor_datasets.py)
+/market_context.csv

@@ -170,6 +170,7 @@ class TaskController:
                     "probability": float(result.get("swing_probability", 0)),
                     "confidence": result.get("confidence_level", "Low"),
                     "source": result.get("source", "model"),
+                    "validation_warning": result.get("validation_warning"),
                 })
             except Exception as error:
                 # A real failure for this symbol (bad data, PredictionError, no API key, ...).

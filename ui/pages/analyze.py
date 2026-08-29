@@ -99,18 +99,30 @@ class AnalyzePage(BasePage):
         probability = float(result.get("swing_probability", 0))
         self.probability.setValue(round(probability * 100))
 
+        # Two different reasons this number may not mean what it looks like: there was no
+        # model to ask, or there was one and it failed its out-of-sample check. The second
+        # is the more dangerous of the two, because the number does come from a model.
         is_heuristic = result.get("source") == "heuristic_no_model"
-        self.source_notice.setVisible(is_heuristic)
+        validation_warning = result.get("validation_warning")
+        self.source_notice.setVisible(bool(is_heuristic or validation_warning))
         if is_heuristic:
             self.source_notice.setText(
                 f"⚠ Heuristic estimate, not model-based: {result.get('heuristic_reason', '')}"
             )
+        elif validation_warning:
+            self.source_notice.setText(f"⚠ Unvalidated model: {validation_warning}")
 
+        # Entry/take-profit/stop-loss read as a trade plan. For a model that failed its
+        # out-of-sample check they are arithmetic on a meaningless probability, so they
+        # are blanked rather than rendered as levels somebody might act on.
+        levels_meaningful = not validation_warning
         values = {
-            "Confidence": result.get("confidence_level", "--"),
+            "Confidence": result.get("confidence_level", "--") if levels_meaningful else "--",
             "Entry": self.window.money(result.get("current_price", 0), currency),
-            "Take-profit": self.window.money(result.get("take_profit", 0), currency),
-            "Stop-loss": self.window.money(result.get("stop_loss", 0), currency),
+            "Take-profit": (self.window.money(result.get("take_profit", 0), currency)
+                            if levels_meaningful else "--"),
+            "Stop-loss": (self.window.money(result.get("stop_loss", 0), currency)
+                          if levels_meaningful else "--"),
             "Category": result.get("category", "--"),
             "Region": self.window.market_label(),
         }
@@ -139,6 +151,8 @@ class AnalyzePage(BasePage):
         call, whether that call is yes or no), so it can't drive color on its own --
         an 8% swing probability the model is 91%-sure of is a confident NO, not
         something to paint the same teal as a confident YES."""
+        if result.get("validation_warning"):
+            return self.window.colors["muted"]
         if result.get("is_swing_opportunity"):
             return self.window.colors["teal"]
         if result.get("confidence_level") == "High":

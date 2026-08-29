@@ -1,16 +1,30 @@
-# Model Calibration Findings — 2026-08-24
+# Archived: Threshold Calibration Investigation, 2026-08-24
 
-> **Superseded, 2026-08-29.** The numbers below were measured against the per-symbol
-> percentage split and the 108-feature set, both of which have since been replaced: the
-> dataset now uses one pair of calendar cutoffs per category, and absolute price/volume
-> levels are excluded from the feature set (89 features). No figure in this document
-> corresponds to anything currently in `models/` or `test/`. The `swing_threshold`
-> values in section 4 are still the ones in `app/config.py` and still land their
-> categories in the 2-8% positive-label band on the new split; the `decision_threshold`
-> values in section 4 have been rederived (see `scripts/select_thresholds.py` and the
-> README). What remains useful here is the reasoning -- why a uniform 15% swing
-> threshold silenced four categories, and why a naive Sharpe argmax on a handful of
-> trades is not a calibration.
+> **This is a historical record, not a description of the system.** Everything below was
+> measured against the per-symbol percentage split, the 108-feature set, and the
+> 56-ticker universe, all three of which have since been replaced. Two full rebuilds have
+> happened since: the dataset is now split at category-wide calendar cutoffs over 208
+> tickers, the feature set is 102 scale-free columns including market context, and model
+> probabilities are calibrated. **No number in this document corresponds to anything
+> currently in `models/`, `train/` or `test/`.** It is kept because the reasoning is
+> still correct and still explains why the current design looks the way it does.
+>
+> For the state of the models today, read these instead -- all of them live beside the
+> code they describe, which is the point:
+>
+> | What | Where |
+> |---|---|
+> | Which categories produce a usable signal, and why the others don't | `app/config.py`, `CATEGORIES_FAILING_VALIDATION` |
+> | How each entry threshold is derived | `scripts/expected_value_thresholds.py` |
+> | Why thresholds are computed rather than swept | `app/ensemble.py` |
+> | How the split and its embargoes work | `scripts/build_factor_datasets.py` |
+> | How every metric gets an error bar | `scripts/walk_forward_cv.py` |
+>
+> What remains useful here: why a uniform 15% swing threshold silenced four categories
+> (section 2), and why picking a decision threshold by the best Sharpe among a handful of
+> trades is not a calibration (section 3). Both mistakes are easy to make again. The
+> `swing_threshold` values in section 4 are still the ones in `app/config.py`; every
+> `decision_threshold` in it has been superseded twice over.
 
 A record of a threshold-calibration investigation across all 8 factor-category models: why four categories were producing zero trades, what was tried, what actually changed, and what still shouldn't be trusted at face value. This is a point-in-time snapshot of one retrain against one fixed chronological split, not a permanent guarantee -- numbers here will drift the next time any category is retrained or the test window rolls forward.
 

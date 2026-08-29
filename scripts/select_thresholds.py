@@ -11,7 +11,8 @@ reason the three-way split exists.
 
 Why not "best validation Sharpe among thresholds with >=5 trades", the rule this
 script used to apply: it repeatedly picked the thinnest sample on offer.
-MODEL_CALIBRATION_FINDINGS.md records inflation_safe_haven's naive argmax landing on
+docs/2026-08-24-calibration-investigation.md
+records inflation_safe_haven's naive argmax landing on
 5 validation trades with a Sharpe of 4.13 -- not a credible number at that size -- and
 small_cap's pick looking fine on validation (+7.6%) before losing money on test
 (-9.1%). A mean computed from five trades has an enormous standard error, and taking
@@ -56,7 +57,7 @@ from app.data_loader import (  # noqa: E402
     category_validation_dir,
     list_categories,
 )
-from app.detector import SwingTradeDetector, walk_forward_backtest  # noqa: E402
+from app.detector import SwingTradeDetector, score_for_backtest, simulate_trades  # noqa: E402
 from app.market_data.alpha_vantage_provider import AlphaVantageProvider  # noqa: E402
 
 THRESHOLDS = [round(0.05 * step, 2) for step in range(1, 18)]  # 0.05 .. 0.85
@@ -77,14 +78,24 @@ def load_symbol_data(directory):
     return data
 
 
-def pooled_metrics(detector, symbol_data, threshold):
-    all_profits = []
-    drawdowns = []
-    for df in symbol_data.values():
+def score_once(detector, symbol_data):
+    """Indicators + predict_proba per symbol, done once and reused for every candidate
+    threshold -- neither depends on the threshold, and together they dominate the cost
+    of a sweep. See app/detector.py's BacktestScoring."""
+    scored = {}
+    for symbol, df in symbol_data.items():
         try:
-            result = walk_forward_backtest(detector, df, decision_threshold=threshold)
+            scored[symbol] = score_for_backtest(detector, df)
         except ValueError:
             continue  # not enough rows for this symbol's window at this category's lookforward
+    return scored
+
+
+def pooled_metrics(detector, scored_data, threshold):
+    all_profits = []
+    drawdowns = []
+    for scoring in scored_data.values():
+        result = simulate_trades(detector, scoring, decision_threshold=threshold)
         all_profits.extend(trade["profit_pct"] for trade in result["trades"])
         drawdowns.append(result["max_drawdown"])
 
@@ -113,8 +124,8 @@ def select_for_category(category):
     detector = SwingTradeDetector(category, provider)
     default_threshold = detector.decision_threshold
 
-    validation_data = load_symbol_data(category_validation_dir(category))
-    test_data = load_symbol_data(category_test_dir(category))
+    validation_data = score_once(detector, load_symbol_data(category_validation_dir(category)))
+    test_data = score_once(detector, load_symbol_data(category_test_dir(category)))
 
     validation_sweep = [
         {"threshold": t, **pooled_metrics(detector, validation_data, t)}

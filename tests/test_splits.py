@@ -12,11 +12,14 @@ reaching a model fitted before it:
      keeps the loop its vectorized labeler replaced, so the leakage test can show it
      catches the thing it was written for rather than passing vacuously.
 
-  2. The internal split inside app/trainer.py, used only to report progress. Its
-     masks are positional now; they used to be index-label based, and because symbols
-     share dates, holding out one symbol's recent rows also held out every other
-     symbol's rows on those dates. `test_internal_split_is_positional_not_label_based`
-     is the regression test for that.
+  2. The internal split inside app/trainer.py, which now cuts three slices per symbol
+     -- fit, calibrate, report -- with an embargo at both boundaries. Three disjoint
+     slices matter because reusing one for two purposes (calibrating on the rows the
+     metrics are then reported on) makes the reported number optimistic by exactly the
+     amount that matters. Its masks are positional; they used to be index-label based,
+     and because symbols share dates, holding out one symbol's recent rows also held out
+     every other symbol's rows on those dates.
+     `test_internal_split_is_positional_not_label_based` is the regression test.
 
 Everything here runs on synthetic frames -- no network, no yfinance call, and nothing
 that reads or writes the real train/ validation/ test/ directories.
@@ -31,7 +34,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import DEFAULT_LOOKFORWARD_PERIODS  # noqa: E402
-from app.trainer import INTERNAL_VALIDATION_FRACTION, SwingTradeTrainer  # noqa: E402
+from app.trainer import (  # noqa: E402
+    INTERNAL_CALIBRATION_FRACTION,
+    INTERNAL_VALIDATION_FRACTION,
+    SwingTradeTrainer,
+)
 from scripts.build_factor_datasets import (  # noqa: E402
     EMBARGO_PERIODS,
     TRAIN_FRACTION,
@@ -286,54 +293,72 @@ def _symbol_positions(df_clean, symbol):
 def _run_internal_split(symbol_lengths, lookforward_periods=10):
     trainer = SwingTradeTrainer(lookforward_periods=lookforward_periods)
     df_clean, X, y = _df_clean(symbol_lengths)
-    X_train, X_val, y_train, y_val = trainer._chronological_internal_split(df_clean, X, y)
-    assert len(X_train) == len(y_train) and len(X_val) == len(y_val)
-    return trainer, df_clean, _selected_positions(X_train), _selected_positions(X_val)
+    slices = trainer._chronological_internal_split(df_clean, X, y)
+    selected = {name: _selected_positions(features) for name, (features, _) in slices.items()}
+    for name, (features, labels) in slices.items():
+        assert len(features) == len(labels), f"{name} slice has mismatched X/y lengths"
+    return trainer, df_clean, selected
 
 
-def test_internal_split_embargoes_lookforward_rows_for_every_symbol():
+def test_internal_split_returns_three_disjoint_slices():
+    _, df_clean, selected = _run_internal_split({"AAA": 1000, "BBB": 600})
+    assert set(selected) == {"fit", "calibrate", "report"}
+    assert selected["fit"].isdisjoint(selected["calibrate"])
+    assert selected["fit"].isdisjoint(selected["report"])
+    assert selected["calibrate"].isdisjoint(selected["report"])
+    assert all(slice_positions for slice_positions in selected.values()), "no slice may be empty here"
+
+
+def test_internal_split_orders_slices_chronologically_per_symbol():
+    """fit before calibrate before report, within each symbol. Calibrating on rows that
+    precede the fitting rows would be the same look-ahead in a different costume."""
+    lengths = {"AAA": 1000, "BBB": 600}
+    _, df_clean, selected = _run_internal_split(lengths)
+    for symbol in lengths:
+        owned = set(_symbol_positions(df_clean, symbol).tolist())
+        fit = selected["fit"] & owned
+        calibrate = selected["calibrate"] & owned
+        report = selected["report"] & owned
+        assert max(fit) < min(calibrate)
+        assert max(calibrate) < min(report)
+
+
+def test_internal_split_embargoes_both_boundaries():
+    lookforward = 10
+    lengths = {"AAA": 1000, "BBB": 600}
+    trainer, df_clean, selected = _run_internal_split(lengths, lookforward)
+    for symbol in lengths:
+        owned = set(_symbol_positions(df_clean, symbol).tolist())
+        assert min(selected["calibrate"] & owned) - max(selected["fit"] & owned) - 1 == lookforward
+        assert min(selected["report"] & owned) - max(selected["calibrate"] & owned) - 1 == lookforward
+    # Two boundaries per symbol, lookforward rows each.
+    assert trainer._embargoed_rows == 2 * lookforward * len(lengths)
+
+
+def test_internal_split_accounts_for_every_row():
     lengths = {"AAA": 1000, "BBB": 600, "CCC": 400}
-    trainer, df_clean, train_positions, validation_positions = _run_internal_split(lengths)
-
-    assert trainer._embargoed_rows == 10 * len(lengths)
-    assert len(train_positions) + len(validation_positions) + trainer._embargoed_rows == len(df_clean)
-    assert trainer.training_stats.get("embargoed_samples", None) is None  # only set by train()
-
-
-def test_internal_split_train_and_validation_never_overlap():
-    _, _, train_positions, validation_positions = _run_internal_split({"AAA": 1000, "BBB": 600})
-    assert train_positions.isdisjoint(validation_positions)
+    trainer, df_clean, selected = _run_internal_split(lengths)
+    assigned = sum(len(positions) for positions in selected.values())
+    assert assigned + trainer._embargoed_rows == len(df_clean)
 
 
 def test_internal_split_holds_out_the_most_recent_slice_of_each_symbol():
-    lookforward = 10
     lengths = {"AAA": 1000, "BBB": 600}
-    _, df_clean, train_positions, validation_positions = _run_internal_split(lengths, lookforward)
-
+    _, df_clean, selected = _run_internal_split(lengths)
     for symbol, rows in lengths.items():
         positions = _symbol_positions(df_clean, symbol)
-        split_at = int(rows * (1 - INTERNAL_VALIDATION_FRACTION))
-        expected_train = set(positions[:split_at - lookforward].tolist())
-        expected_validation = set(positions[split_at:].tolist())
-
-        assert train_positions & set(positions.tolist()) == expected_train
-        assert validation_positions & set(positions.tolist()) == expected_validation
+        report_start = int(rows * (1 - INTERNAL_VALIDATION_FRACTION))
+        assert selected["report"] & set(positions.tolist()) == set(positions[report_start:].tolist())
 
 
-def test_internal_split_gap_is_exactly_lookforward_rows_per_symbol():
-    lookforward = 7
-    lengths = {"AAA": 1000, "BBB": 600}
-    _, df_clean, train_positions, validation_positions = _run_internal_split(lengths, lookforward)
-
-    for symbol in lengths:
-        positions = _symbol_positions(df_clean, symbol)
-        owned = set(positions.tolist())
-        last_train = max(train_positions & owned)
-        first_validation = min(validation_positions & owned)
-        # Rows strictly between the two belong to neither side.
-        assert first_validation - last_train - 1 == lookforward
-        assert not any(p in train_positions or p in validation_positions
-                       for p in range(last_train + 1, first_validation))
+def test_calibration_slice_is_the_configured_share():
+    lengths = {"AAA": 1000}
+    lookforward = 10
+    _, df_clean, selected = _run_internal_split(lengths, lookforward)
+    positions = _symbol_positions(df_clean, "AAA")
+    expected_start = int(1000 * (1 - INTERNAL_VALIDATION_FRACTION - INTERNAL_CALIBRATION_FRACTION))
+    expected_end = int(1000 * (1 - INTERNAL_VALIDATION_FRACTION)) - lookforward
+    assert selected["calibrate"] == set(positions[expected_start:expected_end].tolist())
 
 
 def test_internal_split_is_positional_not_label_based():
@@ -343,34 +368,31 @@ def test_internal_split_is_positional_not_label_based():
     BBB's recent rows silently held out long-history AAA's rows on the same dates.
 
     AAA has 1000 rows and BBB the first 500 of the same dates, so BBB's held-out tail
-    (positions 425-499 within BBB) sits in the middle of AAA's training range.
+    sits in the middle of AAA's fitting range.
     """
     lookforward = 10
     lengths = {"AAA": 1000, "BBB": 500}
-    _, df_clean, train_positions, _ = _run_internal_split(lengths, lookforward)
+    _, df_clean, selected = _run_internal_split(lengths, lookforward)
 
     aaa = _symbol_positions(df_clean, "AAA")
     bbb = _symbol_positions(df_clean, "BBB")
-
-    # AAA's own cut is at 850, embargoed back to 840 -- nothing to do with BBB's cut.
-    assert len(train_positions & set(aaa.tolist())) == 850 - lookforward
+    expected_fit_end = int(1000 * (1 - INTERNAL_VALIDATION_FRACTION - INTERNAL_CALIBRATION_FRACTION)) - lookforward
+    assert len(selected["fit"] & set(aaa.tolist())) == expected_fit_end
 
     bbb_holdout_start = int(len(bbb) * (1 - INTERNAL_VALIDATION_FRACTION))
     contested_dates = df_clean.index[bbb[bbb_holdout_start:]]
     contested_aaa = aaa[np.isin(df_clean.index[aaa], contested_dates)]
-
     assert len(contested_aaa) > 0, "fixture no longer overlaps the two symbols' dates"
-    assert set(contested_aaa.tolist()).issubset(train_positions), (
+    assert set(contested_aaa.tolist()).issubset(selected["fit"]), (
         "AAA rows were held out because BBB shares those dates -- the label-based bug"
     )
 
 
-def test_internal_split_survives_a_symbol_shorter_than_the_embargo():
-    """A symbol with fewer rows than lookforward_periods contributes no training rows
-    rather than a negative-width slice."""
-    trainer, df_clean, train_positions, validation_positions = _run_internal_split(
-        {"AAA": 1000, "TINY": 5}, lookforward_periods=10
-    )
+def test_symbol_too_short_for_a_calibration_slice_contributes_none():
+    """A two-row calibration set produces a nonsense probability mapping, so a symbol
+    that cannot leave a usable one contributes to fit and report only."""
+    lengths = {"AAA": 1000, "TINY": 12}
+    _, df_clean, selected = _run_internal_split(lengths, lookforward_periods=10)
     tiny = set(_symbol_positions(df_clean, "TINY").tolist())
-    assert not (train_positions & tiny)
-    assert validation_positions & tiny
+    assert not (selected["calibrate"] & tiny)
+    assert selected["report"] & tiny

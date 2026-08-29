@@ -60,6 +60,15 @@ def build_dataset_snapshot(data_directory):
     return snapshot
 
 
+def _screen_sort_key(entry):
+    """Sort key for screen_symbols: (rankable, probability), descending. Only status="ok"
+    rows are rankable; a row whose model failed validation ("untrusted_model") or whose
+    data never arrived ("unavailable") sorts below every ranked one, without its
+    probability ever being compared against a trustworthy one."""
+    rankable = 1 if entry.get("status") == "ok" else 0
+    return (rankable, entry.get("swing_probability", 0))
+
+
 class SwingTradingSystem:
     def __init__(self):
         self.security_config = SecurityConfig()
@@ -169,6 +178,7 @@ class SwingTradingSystem:
         validated_interval = SecurityValidator.validate_int(check_interval, "check_interval", 5, 86400)
 
         results = {}
+        suppressed = {}
         for symbol in validated_symbols:
             resolved_category = category or category_for_symbol(symbol)
             detector = self.get_detector(resolved_category, validated_mode)
@@ -176,9 +186,15 @@ class SwingTradingSystem:
             if df is None or len(df) < 50:
                 continue
             result = detector.detect_swing_opportunity(df, symbol)
+            # An alert is a recommendation to act. A category whose model lost to its own
+            # null out-of-sample (CATEGORIES_FAILING_VALIDATION) never raises one, however
+            # high its probability -- the probability is the thing that isn't meaningful.
+            if not detector.is_trustworthy:
+                suppressed[symbol] = result
+                continue
             if result["swing_probability"] >= validated_threshold:
                 results[symbol] = result
-        return {"alerts": results, "check_interval": validated_interval}
+        return {"alerts": results, "suppressed": suppressed, "check_interval": validated_interval}
 
     def load_symbols_from_stocks_file(self, stock_mode="US", stocks_file=STOCKS_FILE_PATH):
         if not os.path.isfile(stocks_file):
@@ -204,9 +220,13 @@ class SwingTradingSystem:
                 screened.append({"symbol": symbol, "status": "unavailable"})
                 continue
             result = detector.detect_swing_opportunity(df, symbol)
-            result["status"] = "ok"
+            result["status"] = "ok" if detector.is_trustworthy else "untrusted_model"
             screened.append(result)
-        screened.sort(key=lambda entry: entry.get("swing_probability", 0), reverse=True)
+        # A ranking is a recommendation, so a model that failed its out-of-sample check
+        # doesn't get a rank: its rows sort below every scored one regardless of
+        # probability, and carry status="untrusted_model" plus validation_warning so the
+        # UI can say why instead of silently dropping the symbol.
+        screened.sort(key=_screen_sort_key, reverse=True)
         return screened
 
     def run_backtest(self, symbol, category=None, stock_mode="US", days_back=90, request_context=None):

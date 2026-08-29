@@ -287,6 +287,8 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
             probability_text = self.pct(signal.get("probability", 0)) if available else "--"
             if available and signal.get("source") == "heuristic_no_model":
                 probability_text += " (heuristic)"
+            elif available and signal.get("validation_warning"):
+                probability_text += " (unvalidated)"
             rows.append([
                 signal.get("symbol", ""),
                 signal.get("company", signal.get("symbol", "")),
@@ -362,9 +364,15 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
     def analysis_ready(self, payload):
         self.state.set_last_analysis(payload)
         result = payload["result"]
+        # A "signal" alert is a recommendation. A category whose model failed its
+        # out-of-sample check can still be analyzed, but it never raises one -- the
+        # alert is logged as plain system text with the reason attached instead.
+        warning = result.get("validation_warning")
+        crossed = result.get("swing_probability", 0) >= DEFAULT_DECISION_THRESHOLD
         self.add_alert(
-            "signal" if result.get("swing_probability", 0) >= DEFAULT_DECISION_THRESHOLD else "system",
-            f"{result['symbol']} probability {self.pct(result.get('swing_probability', 0))}.",
+            "signal" if (crossed and not warning) else "system",
+            f"{result['symbol']} probability {self.pct(result.get('swing_probability', 0))}."
+            + (" Unvalidated model -- not a signal." if warning else ""),
         )
         self.save_config()
         self.pages["Analyze"].refresh()

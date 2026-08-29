@@ -51,6 +51,7 @@ from app.data_loader import DataProcessor
 from app.ensemble import HybridSwingEnsemble, compute_scale_pos_weight
 from app.indicators import PRICE_LEVEL_COLUMNS, TechnicalIndicators
 from app.labeling import create_swing_labels, effective_threshold
+from app.market_context import MARKET_CONTEXT_FEATURES, load_context
 
 try:
     from xgboost import XGBClassifier
@@ -58,6 +59,11 @@ except ImportError:
     XGBClassifier = None
 
 INTERNAL_VALIDATION_FRACTION = 0.15
+# Slice reserved for mapping each ensemble member's raw scores onto real probabilities
+# (app/ensemble.py). It sits between the fitting slice and the reporting slice, purged
+# from both, so calibration never sees data it was fitted on and the reported metrics
+# never see data the calibration was fitted on.
+INTERNAL_CALIBRATION_FRACTION = 0.15
 
 # Raw OHLCV, bookkeeping columns, and the label columns themselves -- plus every
 # absolute price/volume level (app/indicators.py's PRICE_LEVEL_COLUMNS, which owns
@@ -80,6 +86,7 @@ class SwingTradeTrainer:
         rf_estimators=250,
         xgb_learning_rate=0.05,
         xgb_max_depth=6,
+        market_context=None,
     ):
         if XGBClassifier is None:
             raise ImportError("xgboost is required for training. Install it with: pip install xgboost")
@@ -87,6 +94,10 @@ class SwingTradeTrainer:
         self.lookforward_periods = lookforward_periods
         self.min_hold_periods = min_hold_periods
         self.decision_threshold = decision_threshold
+        # Loaded here rather than per symbol: the same four series serve every symbol, and
+        # re-reading them once per ticker would dominate feature construction. None means
+        # the cache has not been built, and the model is trained without context.
+        self.market_context = load_context() if market_context is None else market_context
 
         self.random_forest_model = RandomForestClassifier(
             n_estimators=rf_estimators, max_depth=10, min_samples_split=20, min_samples_leaf=8,
@@ -136,19 +147,29 @@ class SwingTradeTrainer:
         grouped_frames = []
         for symbol, symbol_df in df.groupby("symbol", sort=True):
             symbol_frame = symbol_df.drop(columns=["symbol"]).sort_index()
-            df_features = TechnicalIndicators.create_all_indicators(symbol_frame)
+            df_features = TechnicalIndicators.create_all_indicators(
+                symbol_frame, market_context=self.market_context
+            )
             df_labeled = create_swing_labels(
                 df_features, self.swing_threshold, self.lookforward_periods, self.min_hold_periods
             )
             # Fill gaps against this symbol's own history, before the concat. Filling
             # afterwards lets one symbol supply another's values: a symbol with too
             # little history for a 200-day window has no sma_200/price_sma_200_ratio
-            # column at all, and a frame-wide ffill/bfill hands it the neighbouring
-            # symbol's numbers instead of leaving it missing. Category-wide calendar
-            # cutoffs (scripts/build_factor_datasets.py) make short per-symbol training
-            # frames routine, so this is a live case, not a theoretical one.
+            # column at all, and a frame-wide ffill hands it the neighbouring symbol's
+            # numbers instead of leaving it missing. Category-wide calendar cutoffs
+            # (scripts/build_factor_datasets.py) make short per-symbol training frames
+            # routine, so this is a live case, not a theoretical one.
+            #
+            # Forward only, never backward. A back-fill takes a value from later in the
+            # series and writes it into an earlier row, which is look-ahead however
+            # short the reach: for a 200-day moving average it silently seeded the first
+            # 200 rows with a number computed from bars they precede, and once market
+            # context joined the frame it would have handed a 1950s bar the VIX reading
+            # from 1990. Leading rows with nothing to carry forward stay NaN and are
+            # dropped below, which costs a warm-up window per symbol and no correctness.
             fill_cols = [col for col in df_labeled.columns if col not in EXCLUDE_FROM_FEATURES]
-            df_labeled[fill_cols] = df_labeled[fill_cols].ffill().bfill()
+            df_labeled[fill_cols] = df_labeled[fill_cols].ffill()
             df_labeled["symbol"] = symbol
             grouped_frames.append(df_labeled)
 
@@ -173,34 +194,56 @@ class SwingTradeTrainer:
         return df_clean[feature_cols], df_clean["swing_label"], df_clean
 
     def _chronological_internal_split(self, df_clean, X, y):
-        """Per-symbol chronological split with an embargo, most recent
-        INTERNAL_VALIDATION_FRACTION held out -- see module docstring for why this
-        isn't a random shuffle, and why a bare chronological cut still isn't enough.
+        """Per-symbol chronological three-way split with an embargo at each boundary.
 
-        The `lookforward_periods` rows immediately before each symbol's cut are
-        dropped from both sides: their swing labels are computed from bars that fall
-        on the validation side, so training on them lets the model see the outcome of
-        the very rows it is about to be scored on.
+        Each symbol's rows, oldest to newest:
 
-        Masks are positional, not index-label based. df_clean's index is the date
-        index and symbols share dates, so `mask.loc[one_symbol_slice.index] = False`
-        also flips every other symbol's rows on those dates.
+            [ fit ][embargo][ calibrate ][embargo][ report ]
+
+        `fit` trains the trees, `calibrate` maps their raw scores onto probabilities, and
+        `report` is what train() prints metrics on -- three disjoint slices, because
+        reusing one for two purposes makes the reported number optimistic by exactly the
+        amount that matters. See the module docstring for why this isn't a random shuffle,
+        and why a bare chronological cut still isn't enough.
+
+        The `lookforward_periods` rows before each boundary belong to no slice: their
+        swing labels are computed from bars on the far side of it.
+
+        Masks are positional, not index-label based. df_clean's index is the date index
+        and symbols share dates, so `mask.loc[one_symbol_slice.index] = False` would also
+        flip every other symbol's rows on those dates.
         """
         symbols = df_clean["symbol"].to_numpy()
-        train_mask = np.zeros(len(df_clean), dtype=bool)
-        validation_mask = np.zeros(len(df_clean), dtype=bool)
+        fit_mask = np.zeros(len(df_clean), dtype=bool)
+        calibration_mask = np.zeros(len(df_clean), dtype=bool)
+        report_mask = np.zeros(len(df_clean), dtype=bool)
         embargoed = 0
 
         for symbol in np.unique(symbols):
             positions = np.flatnonzero(symbols == symbol)
-            split_at = int(len(positions) * (1 - INTERNAL_VALIDATION_FRACTION))
-            embargo_at = max(0, split_at - self.lookforward_periods)
-            train_mask[positions[:embargo_at]] = True
-            validation_mask[positions[split_at:]] = True
-            embargoed += split_at - embargo_at
+            rows = len(positions)
+            report_start = int(rows * (1 - INTERNAL_VALIDATION_FRACTION))
+            calibration_end = max(0, report_start - self.lookforward_periods)
+            calibration_start = int(rows * (1 - INTERNAL_VALIDATION_FRACTION - INTERNAL_CALIBRATION_FRACTION))
+            fit_end = max(0, calibration_start - self.lookforward_periods)
+
+            report_mask[positions[report_start:]] = True
+            # A symbol too short to leave a usable calibration slice contributes none --
+            # better than a two-row calibration set that produces a nonsense mapping.
+            if calibration_start < calibration_end:
+                calibration_mask[positions[calibration_start:calibration_end]] = True
+                fit_mask[positions[:fit_end]] = True
+                embargoed += (calibration_start - fit_end) + (report_start - calibration_end)
+            else:
+                fit_mask[positions[:calibration_end]] = True
+                embargoed += report_start - calibration_end
 
         self._embargoed_rows = embargoed
-        return X[train_mask], X[validation_mask], y[train_mask], y[validation_mask]
+        return {
+            "fit": (X[fit_mask], y[fit_mask]),
+            "calibrate": (X[calibration_mask], y[calibration_mask]),
+            "report": (X[report_mask], y[report_mask]),
+        }
 
     def train(self, data_directory):
         df = self.load_historical_data(data_directory)
@@ -208,24 +251,42 @@ class SwingTradeTrainer:
             raise ValueError("Insufficient data for training (minimum 500 samples required)")
 
         X, y, df_clean = self.prepare_training_data(df)
-        print(f"Training dataset shape: {X.shape}")
+        context_columns = [c for c in MARKET_CONTEXT_FEATURES if c in self.feature_columns]
+        print(f"Training dataset shape: {X.shape} "
+              f"({len(context_columns)} market-context features"
+              f"{'' if context_columns else ' -- context cache not built'})")
         print(f"Swing opportunities: {sum(y)} out of {len(y)} samples ({sum(y) / len(y) * 100:.2f}%)")
         if sum(y) < 10:
             print("WARNING: very few positive samples -- consider a lower swing threshold or more data.")
 
-        X_train, X_val, y_train, y_val = self._chronological_internal_split(df_clean, X, y)
-        print(f"Internal split: {len(X_train)} train rows, {len(X_val)} validation rows "
-              f"(most recent {INTERNAL_VALIDATION_FRACTION:.0%} per symbol), "
-              f"{self._embargoed_rows} rows embargoed at the cut ({self.lookforward_periods} per symbol)")
+        slices = self._chronological_internal_split(df_clean, X, y)
+        X_train, y_train = slices["fit"]
+        X_calibrate, y_calibrate = slices["calibrate"]
+        X_val, y_val = slices["report"]
+        print(f"Internal split: {len(X_train)} fit rows, {len(X_calibrate)} calibration rows, "
+              f"{len(X_val)} report rows, {self._embargoed_rows} embargoed "
+              f"({self.lookforward_periods} per boundary per symbol)")
 
+        # Fitted on the fit slice alone: a scaler fitted across the calibration or report
+        # slices would carry their distribution into the model's inputs.
         X_train_scaled = self.scaler.fit_transform(X_train)
+        X_calibrate_scaled = self.scaler.transform(X_calibrate) if len(X_calibrate) else X_calibrate
         X_val_scaled = self.scaler.transform(X_val)
 
         self.scale_pos_weight = compute_scale_pos_weight(y_train)
         self.xgboost_model.set_params(scale_pos_weight=self.scale_pos_weight)
         print(f"Computed scale_pos_weight={self.scale_pos_weight:.3f} from actual training label ratio")
 
-        self.model.fit(X_train_scaled, y_train)
+        if len(X_calibrate):
+            self.model.fit_calibrated(X_train_scaled, y_train, X_calibrate_scaled, y_calibrate)
+        else:
+            self.model.fit(X_train_scaled, y_train)
+        if self.model.is_calibrated:
+            print(f"Calibrated both ensemble members with {self.model.calibration_method} on "
+                  f"{len(X_calibrate)} held-out rows ({int(np.sum(y_calibrate))} positives)")
+        else:
+            print("WARNING: not calibrated -- the calibration slice had no positive labels. "
+                  "Probabilities are raw scores and are not comparable across categories.")
         y_train_pred = self.model.predict(X_train_scaled)
         y_val_pred = self.model.predict(X_val_scaled)
         y_val_proba = self.model.predict_proba(X_val_scaled)
@@ -233,6 +294,9 @@ class SwingTradeTrainer:
         train_score = accuracy_score(y_train, y_train_pred)
         val_score = accuracy_score(y_val, y_val_pred)
         metrics = self._validation_metrics(y_val, y_val_pred, y_val_proba[:, 1])
+        calibration_error = self._expected_calibration_error(y_val, y_val_proba[:, 1])
+        print(f"Expected calibration error on the report slice: {calibration_error:.4f} "
+              f"(0 = predicted probabilities match observed frequencies)")
 
         # PR-AUC first, and accuracy only next to the baseline it has to beat: with a
         # ~1-8% positive rate, "always predict no swing" scores in the 90s and beats
@@ -268,6 +332,12 @@ class SwingTradeTrainer:
             "validation_recall": metrics["recall"],
             "validation_base_rate": metrics["base_rate"],
             "validation_majority_accuracy": metrics["majority_accuracy"],
+            "uses_market_context": self.market_context is not None,
+            "is_calibrated": bool(self.model.is_calibrated),
+            "calibration_method": self.model.calibration_method,
+            "calibration_samples": int(len(X_calibrate)),
+            "calibration_positives": int(np.sum(y_calibrate)) if len(X_calibrate) else 0,
+            "expected_calibration_error": calibration_error,
             "mean_positive_probability": float(y_val_proba[:, 1].mean()),
             "feature_importance": feature_importance,
             "model_type": "hybrid_random_forest_xgboost",
@@ -283,6 +353,28 @@ class SwingTradeTrainer:
         }
         self.is_trained = True
         return val_score
+
+    @staticmethod
+    def _expected_calibration_error(y_true, positive_proba, bins=10):
+        """Mean gap between predicted probability and observed frequency, weighted by how
+        many rows land in each probability bin.
+
+        The number the calibration step exists to reduce, and the one that says whether a
+        threshold can be reasoned about rather than searched for: if rows predicted 0.30
+        come true 30% of the time, expected value is computable.
+        """
+        y_true = np.asarray(y_true, dtype=float)
+        positive_proba = np.asarray(positive_proba, dtype=float)
+        if len(y_true) == 0:
+            return float("nan")
+        edges = np.linspace(0.0, 1.0, bins + 1)
+        total_error = 0.0
+        for lower, upper in zip(edges[:-1], edges[1:]):
+            in_bin = (positive_proba > lower) & (positive_proba <= upper)
+            if not in_bin.any():
+                continue
+            total_error += in_bin.sum() * abs(y_true[in_bin].mean() - positive_proba[in_bin].mean())
+        return float(total_error / len(y_true))
 
     @staticmethod
     def _validation_metrics(y_true, y_pred, positive_proba):

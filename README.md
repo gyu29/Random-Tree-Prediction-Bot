@@ -2,11 +2,17 @@
 
 A Python swing-trading research system that trains eight regime-specific ensemble classifiers (one per macro-factor category) on historical market data, detects possible swing opportunities, and provides a modern PySide6 desktop terminal for monitoring model settings, watchlists, alerts, analysis, training, and walk-forward backtesting.
 
+**Most of these models do not currently produce a usable signal, and the app says so.** Each category is checked against the alternative of ignoring it entirely: bin every trade the model would open with no threshold at all by its predicted probability, and see whether higher-probability trades actually earn more (`scripts/expected_value_thresholds.py`). Five of the eight fail that check today — four rank trades backwards or not at all, one cannot be calibrated — and are listed in `app.config.CATEGORIES_FAILING_VALIDATION`. They still load and can still be analyzed, because investigating a model means being able to run it, but they raise no alerts, take no place in the screener ranking, and carry a warning on every result. Treat the three that pass as research output, not advice.
+
 > This project is for education and research only. It is not financial advice, and it should not be used as the sole basis for real trading decisions.
 
 ## Features
 
 - Trains one hybrid Random Forest + XGBoost classifier per factor category (market beta, growth/tech, small-cap, international/emerging, credit conditions, rates/recession, inflation/safe-haven, energy/commodity) instead of a single one-size-fits-all model.
+- Each member's probabilities are calibrated on held-out data before the two are averaged, so a reading of 0.03 means roughly a 3% chance rather than an arbitrary score, and the entry threshold is computed from realized returns instead of swept for (`app/ensemble.py`, `scripts/expected_value_thresholds.py`).
+- Features include market context — VIX, the term spread, and each symbol's return and beta relative to a benchmark (`app/market_context.py`) — so a model can distinguish "this name became volatile" from "everything became volatile".
+- 208 tickers across the eight categories, chosen as distinct exposures (sectors, single countries, credit tiers, curve maturities) rather than near-duplicate wrappers. `market_beta` previously held seven funds tracking the same index at a 0.98 median pairwise return correlation; it now spans 25 exposures at 0.82.
+- Purged walk-forward cross-validation (`scripts/walk_forward_cv.py`) reports every per-category metric as a mean across five expanding-window folds rather than a single number.
 - Chronological, calendar-aligned train/validation/test split (`train/<category>/`, `validation/<category>/`, `test/<category>/`): one pair of cutoff dates per category, applied to every symbol in it, so backtests are genuinely out-of-sample -- and so a model's decision threshold can be tuned on validation without ever touching the data used to report final performance. The cutoff is per category rather than per symbol because a category's symbols are near-duplicates of each other (market_beta's seven wrap the same US large-cap tape, at a median pairwise daily-return correlation of 0.98); splitting each symbol's own rows by percentage left 39-49% of some categories' test rows sitting on dates the model had already trained on through a sibling ticker. Both seams also carry a 10-row embargo, since a swing label reads 10 bars into the future.
 - Builds technical-analysis features with `ta`, `pandas`, `numpy`, and scikit-learn; label creation is vectorized (see `tests/test_labeling.py` for the equivalence check against the original loop implementation).
 - Model artifacts are versioned and integrity-checked: each `models/<category>/` directory has a `manifest.json` (library versions, hyperparameters, a hash of every training file used, and a code version) plus an HMAC-signed `manifest.sig`, verified before any `.pkl` is unpickled.
@@ -60,6 +66,7 @@ Random-Tree-Prediction-Bot/
 |                                     # training_stats.pkl, manifest.json,
 |                                     # manifest.sig (generated)
 |-- docs/                            # Promotional landing page (static, no build step)
+|   |-- 2026-08-24-calibration-*.md  # Archived investigation, superseded (see below)
 |   |-- index.html
 |   |-- styles.css
 |   |-- script.js
@@ -167,7 +174,7 @@ Two guards decide whether a sweep produces a pick at all, both there because the
 
 When no candidate satisfies both, the script keeps the model's existing threshold and prints the shape it saw instead of a number it can't stand behind. On the current models that is five categories out of eight; the three with genuine interior peaks (`credit_conditions`, `growth_tech`, `inflation_safe_haven`) all improved on the shrunk score on `test/` as well, which the selection never looked at.
 
-See [MODEL_CALIBRATION_FINDINGS.md](MODEL_CALIBRATION_FINDINGS.md) for the earlier investigation this replaced -- why four categories were trading zero times at all, and the category-appropriate `swing_threshold` retrain that fixed most of them.
+See [the archived 2026-08-24 calibration investigation](docs/2026-08-24-calibration-investigation.md) for the earlier work this replaced -- why four categories were trading zero times at all, and the category-appropriate `swing_threshold` retrain that fixed most of them. Its numbers predate two rebuilds and describe nothing currently on disk; its reasoning still holds.
 
 To apply a threshold you've decided to keep, without retraining (the RF/XGBoost trees don't depend on it):
 
@@ -260,7 +267,7 @@ Confirm `models/<category>/` exists and contains all five files listed above. If
 - `key_tester.py` remains an intentionally standalone diagnostic tool for data.go.kr credentials (no dependency on `app/`, so it still works if the main app doesn't import).
 - `tests/test_labeling.py` verifies the vectorized label implementation against the original row-by-row loop it replaced. `tests/test_model_registry.py` covers save/load's signature and per-artifact hash verification, including that tampering, corruption, or a changed `MODEL_SIGNING_KEY` are rejected rather than silently loaded. `tests/test_detector.py` covers `walk_forward_backtest`'s entry/exit/equity simulation (stop-loss, take-profit, max-time exits, and the decision-window boundary) using a fake model/scaler so trade-triggering bars are deterministic instead of depending on what a real trained ensemble predicts. `tests/test_security.py` covers `SecurityValidator` (symbol/US and KR regex boundaries, numeric validation's bool- and NaN-rejection, request-context handling) and `RequestRateLimiter`'s sliding-window bucketing, using a fake clock so window-boundary timing is exact rather than racing the real clock. Run with `pytest tests/`.
 - `app/detector.py`'s `walk_forward_backtest` batches its probability predictions once per call rather than per bar; this matters more than it sounds like it should, since a naive per-bar implementation is slow enough on a large symbol's history to make routine re-evaluation (`train_all_categories.py`, `select_thresholds.py`) impractical.
-- `docs/` is an unrelated promotional page: `index.html` + `styles.css` + `script.js` + `fonts/*.woff2`, no build step, no third-party requests (fonts are vendored locally, not loaded from a font CDN). Open `docs/index.html` directly in a browser, or point GitHub Pages at the `docs/` folder to host it. It isn't part of the application and imports nothing from `app/`/`ui/`.
+- `docs/` holds an unrelated promotional page -- `index.html` + `styles.css` + `script.js` + `fonts/*.woff2`, no build step, no third-party requests (fonts are vendored locally, not loaded from a font CDN). Open `docs/index.html` directly in a browser, or point GitHub Pages at the `docs/` folder to host it. It isn't part of the application and imports nothing from `app/`/`ui/`. The dated Markdown file alongside it is an archived investigation, kept for its reasoning; it describes an earlier split, feature set and universe, and none of its numbers match what is on disk today.
 
 ## Disclaimer
 

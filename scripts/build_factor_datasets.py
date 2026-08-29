@@ -39,6 +39,7 @@ import yfinance as yf
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.market_context import fetch_context_series, save_context  # noqa: E402
 from app.config import (  # noqa: E402
     CALENDAR_SPLIT_CUTOFFS,
     DEFAULT_LOOKFORWARD_PERIODS,
@@ -136,6 +137,29 @@ def _write_splits(frames, category, ticker):
     return written
 
 
+def prune_removed_symbols(category, tickers):
+    """Deletes split CSVs for symbols no longer in the category.
+
+    Without this, changing FACTOR_CATEGORIES leaves the old files on disk and every
+    downstream step keeps training on them: dropping SPY, VOO, IVV and VTI from
+    market_beta did not remove them, so the next run would have quietly restored the
+    seven-clones-of-one-index problem the change existed to fix -- and kept training on
+    SPY, which app/market_context.py uses as the benchmark and whose excess-return
+    columns are therefore identically zero.
+    """
+    keep = {_safe_filename(ticker) for ticker in tickers}
+    removed = []
+    for split_name, root in SPLIT_ROOTS.items():
+        directory = os.path.join(root, category)
+        if not os.path.isdir(directory):
+            continue
+        for filename in sorted(f for f in os.listdir(directory) if f.endswith(".csv")):
+            if filename[:-4] not in keep:
+                os.remove(os.path.join(directory, filename))
+                removed.append(f"{split_name}/{filename[:-4]}")
+    return removed
+
+
 def _describe(split_name, frame):
     if frame.empty:
         return f"{split_name}: 0 rows"
@@ -156,6 +180,12 @@ def _download(ticker):
 
 def build_factor_datasets(categories=None):
     categories = categories or FACTOR_CATEGORIES
+    print("Fetching shared market-context series (app/market_context.py)...")
+    try:
+        path = save_context(fetch_context_series())
+        print(f"  wrote {path}")
+    except Exception as error:
+        print(f"  FAILED to build market context: {error}. Models will train without it.")
     summary_rows = []
     failures = []
     warnings = []
@@ -194,6 +224,11 @@ def build_factor_datasets(categories=None):
         print(f"  Cutoffs ({source}): train < {train_end.date()} "
               f"<= validation < {validation_end.date()} <= test  "
               f"[{EMBARGO_PERIODS}-row embargo at each seam]")
+
+        pruned = prune_removed_symbols(category, tickers)
+        if pruned:
+            print(f"  Removed {len(pruned)} file(s) for symbols no longer in this category: "
+                  f"{', '.join(sorted({name.split('/')[1] for name in pruned}))}")
 
         for ticker, history in histories.items():
             frames = split_by_cutoffs(history, train_end, validation_end)

@@ -4,9 +4,36 @@ import numpy as np
 import pandas as pd
 
 from app import model_registry
-from app.config import DEFAULT_DECISION_THRESHOLD, DEFAULT_LOOKFORWARD_PERIODS, DEFAULT_SWING_THRESHOLD
+from app.config import (
+    CATEGORIES_FAILING_VALIDATION,
+    DEFAULT_DECISION_THRESHOLD,
+    DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_SWING_THRESHOLD,
+)
 from app.indicators import TechnicalIndicators
 from app.labeling import effective_threshold
+from app.market_context import MarketContextUnavailable, load_context
+
+
+def resolve_market_context(detector):
+    """The market context a detector's model requires, or None if it needs none.
+
+    Part of the interface the backtest expects, not a private helper: walk_forward_backtest
+    is duck-typed and is driven by stand-ins in tests and by FoldDetector in
+    scripts/walk_forward_cv.py. Anything that does not declare `uses_market_context` is
+    treated as a model trained without it, which is the correct reading for a stand-in
+    built around a plain feature matrix.
+    """
+    if not getattr(detector, "uses_market_context", False):
+        return None
+    context = getattr(detector, "market_context", None)
+    if context is None:
+        raise MarketContextUnavailable(
+            f"'{getattr(detector, 'category', 'unknown')}' was trained with market-context "
+            f"features but market_context.csv is missing. Rebuild it with "
+            f"scripts/build_factor_datasets.py, or retrain this category without context."
+        )
+    return context
 
 
 class NoModelAvailableError(Exception):
@@ -37,6 +64,12 @@ class SwingTradeDetector:
     def __init__(self, category, provider):
         self.category = category
         self.provider = provider
+        # None for a category that passed its out-of-sample check; otherwise the reason
+        # its output must not be presented as a signal. See CATEGORIES_FAILING_VALIDATION.
+        self.validation_warning = CATEGORIES_FAILING_VALIDATION.get(category)
+        # Loaded once per detector; every symbol it scores shares the same series.
+        self.market_context = load_context()
+        self.uses_market_context = False
         self.model = None
         self.scaler = None
         self.feature_columns = []
@@ -70,12 +103,20 @@ class SwingTradeDetector:
         )
         self.lookforward_periods = self.training_stats.get("lookforward_periods", DEFAULT_LOOKFORWARD_PERIODS)
         self.decision_threshold = self.training_stats.get("decision_threshold", DEFAULT_DECISION_THRESHOLD)
+        self.uses_market_context = bool(self.training_stats.get("uses_market_context"))
         if hasattr(self.model, "decision_threshold"):
             self.model.decision_threshold = self.decision_threshold
 
     @property
     def is_ready(self):
         return self.model is not None
+
+    @property
+    def is_trustworthy(self):
+        """A loaded model whose measured out-of-sample performance justifies acting on
+        it. False models still load and still score -- see CATEGORIES_FAILING_VALIDATION
+        for why the gate warns rather than refuses."""
+        return self.is_ready and self.validation_warning is None
 
     def fetch_market_data(self, symbol, **kwargs):
         return self.provider.fetch_ohlcv(symbol, **kwargs)
@@ -95,7 +136,13 @@ class SwingTradeDetector:
         return stop_loss, take_profit
 
     def _build_feature_row(self, df):
-        df_features = TechnicalIndicators.create_all_indicators(df)
+        """Scoring without the context a model was trained with would leave those columns
+        absent, and _default_for_missing_feature would fill them with zeros -- handing the
+        model a market regime that never existed and returning a confident number for it.
+        resolve_market_context raises instead."""
+        df_features = TechnicalIndicators.create_all_indicators(
+            df, market_context=resolve_market_context(self)
+        )
         df_features = df_features.ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0)
         for feature in self.feature_columns:
             if feature not in df_features.columns:
@@ -139,6 +186,10 @@ class SwingTradeDetector:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "source": "model",
+            # None unless this category's model failed its out-of-sample check, in which
+            # case every consumer is obliged to surface it rather than render the
+            # probability as if it meant something.
+            "validation_warning": self.validation_warning,
         }
 
 
@@ -153,8 +204,28 @@ def _max_drawdown(equity_curve):
     return worst
 
 
-def walk_forward_backtest(detector, df, decision_threshold=None, decision_start=50):
-    """Runs the model bar-by-bar over df and simulates entries/exits.
+class BacktestScoring:
+    """Everything walk_forward_backtest needs that does not depend on the threshold:
+    the indicator frame and the model's per-bar probabilities over the decision window.
+
+    Computing indicators and calling predict_proba costs far more than the entry/exit
+    loop, and neither depends on decision_threshold -- so a threshold sweep scores once
+    through `score_for_backtest` and then calls `simulate_trades` per candidate, instead
+    of redoing the expensive half 17 times over. scripts/select_thresholds.py and
+    scripts/walk_forward_cv.py both sweep; walk_forward_backtest composes the two halves
+    for the single-threshold case and behaves exactly as it did before the split.
+    """
+
+    def __init__(self, df, features, window_probabilities, decision_start, decision_end):
+        self.df = df
+        self.features = features
+        self.window_probabilities = window_probabilities
+        self.decision_start = decision_start
+        self.decision_end = decision_end
+
+
+def score_for_backtest(detector, df, decision_start=50):
+    """The threshold-independent half: indicators, then one batched predict_proba.
 
     No per-bar try/except around the model call: a prediction failure aborts the
     backtest with the real exception. See module docstring.
@@ -162,10 +233,11 @@ def walk_forward_backtest(detector, df, decision_threshold=None, decision_start=
     if not detector.is_ready:
         raise NoModelAvailableError(f"No trained model available for category '{detector.category}'")
 
-    decision_threshold = detector.decision_threshold if decision_threshold is None else decision_threshold
     lookforward_periods = detector.lookforward_periods
 
-    features = TechnicalIndicators.create_all_indicators(df)
+    features = TechnicalIndicators.create_all_indicators(
+        df, market_context=resolve_market_context(detector)
+    )
     features = features.ffill().bfill().replace([np.inf, -np.inf], 0)
     for feature in detector.feature_columns:
         if feature not in features.columns:
@@ -186,6 +258,17 @@ def walk_forward_backtest(detector, df, decision_threshold=None, decision_start=
     decision_window = features.iloc[decision_start:decision_end][detector.feature_columns]
     scaled_window = detector.scaler.transform(decision_window)
     window_probabilities = detector.model.predict_proba(scaled_window)[:, 1]
+    return BacktestScoring(df, features, window_probabilities, decision_start, decision_end)
+
+
+def simulate_trades(detector, scoring, decision_threshold=None):
+    """The threshold-dependent half: walk the scored bars and simulate entries/exits."""
+    decision_threshold = detector.decision_threshold if decision_threshold is None else decision_threshold
+    lookforward_periods = detector.lookforward_periods
+    df = scoring.df
+    features = scoring.features
+    decision_start, decision_end = scoring.decision_start, scoring.decision_end
+    window_probabilities = scoring.window_probabilities
 
     trades = []
     position = None
@@ -260,3 +343,14 @@ def walk_forward_backtest(detector, df, decision_threshold=None, decision_start=
         "peak_probability": peak_probability,
         "no_trades_reason": no_trades_reason,
     }
+
+
+def walk_forward_backtest(detector, df, decision_threshold=None, decision_start=50):
+    """Runs the model bar-by-bar over df and simulates entries/exits.
+
+    Unchanged in behaviour; it is now the composition of the two halves above. Sweeping
+    several thresholds over one frame should call score_for_backtest once and
+    simulate_trades per candidate rather than calling this repeatedly.
+    """
+    scoring = score_for_backtest(detector, df, decision_start=decision_start)
+    return simulate_trades(detector, scoring, decision_threshold=decision_threshold)

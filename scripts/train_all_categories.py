@@ -18,6 +18,14 @@ The test-split evaluation has two halves, and both are printed:
   * The walk-forward backtest -- trade count, win rate, realized return. A model
     can rank well and still trade badly (and the reverse), so neither half
     substitutes for the other.
+
+The backtest is run twice: once at the category's decision_threshold and once with
+the threshold at zero, which drives the same entry/exit machinery with the model's
+ranking ignored. The difference is the only number that answers "is this model worth
+consulting at all", and it is reported in standard errors because on 30-200 trades a
+raw difference in mean return is mostly noise. A category that cannot beat its own
+null belongs in app.config.CATEGORIES_FAILING_VALIDATION, which is what gates it out
+of alerts and the screener ranking.
 """
 import os
 import sys
@@ -42,7 +50,12 @@ from app.config import (  # noqa: E402
     DEFAULT_SWING_THRESHOLD,
 )
 from app.data_loader import DataProcessor, category_test_dir, list_categories  # noqa: E402
-from app.detector import NoModelAvailableError, SwingTradeDetector, walk_forward_backtest  # noqa: E402
+from app.detector import (  # noqa: E402
+    NoModelAvailableError,
+    SwingTradeDetector,
+    resolve_market_context,
+    walk_forward_backtest,
+)
 from app.indicators import TechnicalIndicators  # noqa: E402
 from app.labeling import create_swing_labels  # noqa: E402
 from app.market_data.alpha_vantage_provider import AlphaVantageProvider  # noqa: E402
@@ -65,11 +78,20 @@ def classification_metrics_on_test_split(category, detector):
         path = os.path.join(test_dir, filename)
         try:
             df = DataProcessor.load_and_validate_data(path)
-            features = TechnicalIndicators.create_all_indicators(df.drop(columns=["symbol"], errors="ignore"))
-            frames.append(create_swing_labels(
+            features = TechnicalIndicators.create_all_indicators(
+                df.drop(columns=["symbol"], errors="ignore"),
+                market_context=resolve_market_context(detector),
+            )
+            labeled_frame = create_swing_labels(
                 features, detector.swing_threshold, detector.lookforward_periods,
                 detector.training_stats.get("min_hold_periods", 3),
-            ))
+            )
+        # Filled per symbol and forward only, before the concat -- the same discipline as
+        # app/trainer.py. A frame-wide fill lets one symbol supply another's missing
+        # columns, and a back-fill writes later values into earlier rows.
+            fill_cols = [c for c in labeled_frame.columns if c != "swing_label"]
+            labeled_frame[fill_cols] = labeled_frame[fill_cols].ffill()
+            frames.append(labeled_frame)
         except Exception:
             continue  # the backtest half reports this symbol's error already
     if not frames:
@@ -78,8 +100,8 @@ def classification_metrics_on_test_split(category, detector):
     labeled = pd.concat(frames)
     for feature in detector.feature_columns:
         if feature not in labeled.columns:
-            labeled[feature] = 0.0
-    X = labeled[detector.feature_columns].ffill().bfill().replace([np.inf, -np.inf], 0).fillna(0)
+            labeled[feature] = np.nan
+    X = labeled[detector.feature_columns].replace([np.inf, -np.inf], 0).fillna(0)
     y = labeled["swing_label"].astype(int).to_numpy()
 
     probabilities = detector.model.predict_proba(detector.scaler.transform(X))[:, 1]
@@ -100,9 +122,12 @@ def classification_metrics_on_test_split(category, detector):
     }
 
 
-def evaluate_on_test_split(category, detector):
+def evaluate_on_test_split(category, detector, decision_threshold=None):
     """Runs the walk-forward backtest against every symbol's held-out test CSV,
-    concatenating trades so one badly-behaved symbol doesn't hide the rest."""
+    concatenating trades so one badly-behaved symbol doesn't hide the rest.
+
+    decision_threshold=None uses the detector's own; pass 0.0 for the model-off null.
+    """
     test_dir = category_test_dir(category)
     symbol_files = sorted(f for f in os.listdir(test_dir) if f.endswith(".csv")) if os.path.isdir(test_dir) else []
 
@@ -113,7 +138,7 @@ def evaluate_on_test_split(category, detector):
         path = os.path.join(test_dir, filename)
         try:
             df = DataProcessor.load_and_validate_data(path)
-            result = walk_forward_backtest(detector, df)
+            result = walk_forward_backtest(detector, df, decision_threshold=decision_threshold)
         except Exception as error:
             per_symbol.append({"symbol": symbol, "error": str(error)})
             continue
@@ -131,9 +156,32 @@ def evaluate_on_test_split(category, detector):
         "num_trades": len(all_trades),
         "win_rate": (len([p for p in profits if p > 0]) / len(profits)) if profits else 0.0,
         "avg_profit": float(np.mean(profits)) if profits else 0.0,
+        "std_profit": float(np.std(profits, ddof=1)) if len(profits) > 1 else 0.0,
         "total_return_compounded": float(np.prod([1 + p for p in profits]) - 1) if profits else 0.0,
     }
     return combined, per_symbol
+
+
+def compare_against_null(combined, null_combined):
+    """Is the model's edge over "ignore the model" bigger than its own noise?
+
+    Reported in standard errors of the model's own mean: below 1 the difference is
+    indistinguishable from sampling noise, and negative means the ranking actively hurt.
+    """
+    trades = combined["num_trades"]
+    standard_error = combined["std_profit"] / np.sqrt(trades) if trades > 1 else float("inf")
+    edge = combined["avg_profit"] - null_combined["avg_profit"]
+    ratio = edge / standard_error if standard_error and np.isfinite(standard_error) else 0.0
+    if ratio > 2:
+        verdict = "real edge over the null"
+    elif ratio > 1:
+        verdict = "suggestive, not established"
+    elif ratio > -1:
+        verdict = "indistinguishable from ignoring the model"
+    else:
+        verdict = "WORSE than ignoring the model -- gate this category"
+    return {"edge": edge, "standard_error": standard_error, "edge_in_standard_errors": ratio,
+            "verdict": verdict}
 
 
 def train_and_evaluate_category(system, category):
@@ -152,7 +200,8 @@ def train_and_evaluate_category(system, category):
     if category in CALIBRATED_DECISION_THRESHOLDS:
         decision_threshold = CALIBRATED_DECISION_THRESHOLDS[category]
         model_registry.update_decision_threshold(category, decision_threshold)
-        print(f"Applied calibrated decision_threshold={decision_threshold:.0%} (see MODEL_CALIBRATION_FINDINGS.md)")
+        print(f"Applied calibrated decision_threshold={decision_threshold:.2%} "
+              f"(computed by scripts/expected_value_thresholds.py)")
 
     # Fresh detector loaded straight from the signed manifest, exactly like a real user's
     # session would -- this also exercises the integrity check end to end.
@@ -177,6 +226,12 @@ def train_and_evaluate_category(system, category):
               f"always-negative -- {beats} the baseline")
 
     combined, per_symbol = evaluate_on_test_split(category, detector)
+    null_combined, _ = evaluate_on_test_split(category, detector, decision_threshold=0.0)
+    null = compare_against_null(combined, null_combined)
+    print(f"Model-off null (same entries/exits, ranking ignored): {null_combined['num_trades']} trades, "
+          f"win_rate={null_combined['win_rate']:.1%}, avg_profit={null_combined['avg_profit']:.2%}")
+    print(f"  edge over null: {null['edge']:+.2%}/trade "
+          f"({null['edge_in_standard_errors']:+.2f} standard errors) -- {null['verdict']}")
     print(f"Out-of-sample test-split backtest: {combined['num_trades']} trades, "
           f"win_rate={combined['win_rate']:.1%}, avg_profit={combined['avg_profit']:.2%}, "
           f"compounded_return={combined['total_return_compounded']:.2%}")
@@ -202,6 +257,10 @@ def train_and_evaluate_category(system, category):
         "test_beats_baseline": (
             bool(metrics["accuracy"] > metrics["majority_accuracy"]) if metrics else False
         ),
+        "test_null_trades": null_combined["num_trades"],
+        "test_null_avg_profit": null_combined["avg_profit"],
+        "test_edge_over_null": null["edge"],
+        "test_edge_std_errors": null["edge_in_standard_errors"],
         "test_trades": combined["num_trades"],
         "test_win_rate": combined["win_rate"],
         "test_avg_profit": combined["avg_profit"],

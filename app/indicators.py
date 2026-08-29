@@ -30,6 +30,8 @@ import numpy as np
 import pandas as pd
 import ta
 
+from app.market_context import attach_market_context
+
 MA_PERIODS = [5, 10, 20, 50, 100, 200]
 BB_PERIODS = [20, 50]
 
@@ -55,6 +57,26 @@ PRICE_LEVEL_COLUMNS = (
 )
 
 
+# ADX in particular indexes its output array at `window` without checking the array is
+# that long, so a frame shorter than its lookback raises IndexError from inside `ta`
+# rather than returning NaN. The MA and Bollinger blocks below have always guarded their
+# calls; these did not, and a short frame reached them the moment the universe widened
+# enough to produce one (a 12-row fold slice). Guarding them all keeps a too-short frame
+# producing missing columns, which the callers already drop, instead of a crash from a
+# third-party stack frame.
+MIN_ROWS_BY_INDICATOR = {
+    "rsi_14": 14, "rsi_21": 21, "macd": 26, "volume_sma_20": 20,
+    "atr_14": 14, "atr_21": 21, "roc_10": 10, "roc_20": 20,
+    # adx needs 2*window: it averages a directional-index series that is itself a
+    # window-length reduction of the input, so 27 rows still raises and 28 does not.
+    "williams_r": 14, "stoch": 14, "adx": 28, "cci": 20,
+}
+
+
+def _long_enough(df, indicator):
+    return len(df) >= MIN_ROWS_BY_INDICATOR[indicator]
+
+
 def _rolling_zscore(series, window=ROLLING_Z_WINDOW):
     """Scale-free standing of `series` against its own recent history. A zero
     rolling std (a perfectly flat window) becomes NaN rather than inf; callers
@@ -72,7 +94,14 @@ warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 
 class TechnicalIndicators:
     @staticmethod
-    def create_all_indicators(df):
+    def create_all_indicators(df, market_context=None):
+        """Per-symbol technical features, plus market context when supplied.
+
+        market_context is the frame from app/market_context.load_context(). Passing None
+        produces the single-symbol feature set only -- callers scoring a model that was
+        trained with context must pass it, and app/detector.py enforces that rather than
+        letting the columns default silently to zero.
+        """
         df = df.copy()
         price_col = "adj_close" if "adj_close" in df.columns else "close"
 
@@ -93,18 +122,20 @@ class TechnicalIndicators:
                 df[f"ema_{period}_slope"] = df[f"ema_{period}"].pct_change(periods=5)
 
         for rsi_period in [14, 21]:
-            df[f"rsi_{rsi_period}"] = ta.momentum.rsi(df[price_col], window=rsi_period)
-            df[f"rsi_{rsi_period}_change"] = df[f"rsi_{rsi_period}"].diff()
+            if _long_enough(df, f"rsi_{rsi_period}"):
+                df[f"rsi_{rsi_period}"] = ta.momentum.rsi(df[price_col], window=rsi_period)
+                df[f"rsi_{rsi_period}_change"] = df[f"rsi_{rsi_period}"].diff()
 
-        macd_12_26 = ta.trend.MACD(df[price_col], window_slow=26, window_fast=12, window_sign=9)
-        df["macd"] = macd_12_26.macd()
-        df["macd_signal"] = macd_12_26.macd_signal()
-        df["macd_histogram"] = macd_12_26.macd_diff()
-        df["macd_crossover"] = (df["macd"] > df["macd_signal"]).astype(int)
-        # MACD is a difference of two price EMAs, so it inherits the price scale.
-        df["macd_pct"] = df["macd"] / df[price_col]
-        df["macd_signal_pct"] = df["macd_signal"] / df[price_col]
-        df["macd_histogram_pct"] = df["macd_histogram"] / df[price_col]
+        if _long_enough(df, "macd"):
+            macd_12_26 = ta.trend.MACD(df[price_col], window_slow=26, window_fast=12, window_sign=9)
+            df["macd"] = macd_12_26.macd()
+            df["macd_signal"] = macd_12_26.macd_signal()
+            df["macd_histogram"] = macd_12_26.macd_diff()
+            df["macd_crossover"] = (df["macd"] > df["macd_signal"]).astype(int)
+            # MACD is a difference of two price EMAs, so it inherits the price scale.
+            df["macd_pct"] = df["macd"] / df[price_col]
+            df["macd_signal_pct"] = df["macd_signal"] / df[price_col]
+            df["macd_histogram_pct"] = df["macd_histogram"] / df[price_col]
 
         for period in BB_PERIODS:
             if len(df) >= period:
@@ -121,8 +152,9 @@ class TechnicalIndicators:
                 ).astype(int)
 
         if df["volume"].sum() > 0 and not df["volume"].isna().all():
-            df["volume_sma_20"] = ta.trend.sma_indicator(df["volume"], window=20)
-            df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
+            if _long_enough(df, "volume_sma_20"):
+                df["volume_sma_20"] = ta.trend.sma_indicator(df["volume"], window=20)
+                df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
             df["volume_price_trend"] = ta.volume.volume_price_trend(df[price_col], df["volume"])
             df["on_balance_volume"] = ta.volume.on_balance_volume(df[price_col], df["volume"])
             df["volume_weighted_price"] = ta.volume.volume_weighted_average_price(
@@ -141,18 +173,27 @@ class TechnicalIndicators:
             df["on_balance_volume_z"] = 0.0
             df["volume_price_trend_z"] = 0.0
 
-        df["atr_14"] = ta.volatility.average_true_range(df["high"], df["low"], df[price_col], window=14)
-        df["atr_21"] = ta.volatility.average_true_range(df["high"], df["low"], df[price_col], window=21)
-        df["atr_14_pct"] = df["atr_14"] / df[price_col]
-        df["atr_21_pct"] = df["atr_21"] / df[price_col]
-        df["volatility_ratio"] = df["atr_14"] / df["atr_21"]
-        df["roc_10"] = ta.momentum.roc(df[price_col], window=10)
-        df["roc_20"] = ta.momentum.roc(df[price_col], window=20)
-        df["williams_r"] = ta.momentum.williams_r(df["high"], df["low"], df[price_col], lbp=14)
-        df["stoch_k"] = ta.momentum.stoch(df["high"], df["low"], df[price_col])
-        df["stoch_d"] = ta.momentum.stoch_signal(df["high"], df["low"], df[price_col])
-        df["adx"] = ta.trend.adx(df["high"], df["low"], df[price_col], window=14)
-        df["cci"] = ta.trend.cci(df["high"], df["low"], df[price_col], window=20)
+        if _long_enough(df, "atr_14"):
+            df["atr_14"] = ta.volatility.average_true_range(df["high"], df["low"], df[price_col], window=14)
+            df["atr_14_pct"] = df["atr_14"] / df[price_col]
+        if _long_enough(df, "atr_21"):
+            df["atr_21"] = ta.volatility.average_true_range(df["high"], df["low"], df[price_col], window=21)
+            df["atr_21_pct"] = df["atr_21"] / df[price_col]
+        if "atr_14" in df.columns and "atr_21" in df.columns:
+            df["volatility_ratio"] = df["atr_14"] / df["atr_21"]
+        if _long_enough(df, "roc_10"):
+            df["roc_10"] = ta.momentum.roc(df[price_col], window=10)
+        if _long_enough(df, "roc_20"):
+            df["roc_20"] = ta.momentum.roc(df[price_col], window=20)
+        if _long_enough(df, "williams_r"):
+            df["williams_r"] = ta.momentum.williams_r(df["high"], df["low"], df[price_col], lbp=14)
+        if _long_enough(df, "stoch"):
+            df["stoch_k"] = ta.momentum.stoch(df["high"], df["low"], df[price_col])
+            df["stoch_d"] = ta.momentum.stoch_signal(df["high"], df["low"], df[price_col])
+        if _long_enough(df, "adx"):
+            df["adx"] = ta.trend.adx(df["high"], df["low"], df[price_col], window=14)
+        if _long_enough(df, "cci"):
+            df["cci"] = ta.trend.cci(df["high"], df["low"], df[price_col], window=20)
         df["doji"] = (abs(df[price_col] - df["open"]) / (df["high"] - df["low"]) < 0.1).astype(int)
         df["hammer"] = (
             (df["low"] < df[["open", price_col]].min(axis=1))
@@ -172,5 +213,8 @@ class TechnicalIndicators:
             df[f"price_volatility_{window}"] = df["price_change"].rolling(window).std()
             df[f"price_momentum_{window}"] = df[price_col].pct_change(periods=window)
             df[f"high_low_volatility_{window}"] = df["high_low_range"].rolling(window).std()
+
+        if market_context is not None:
+            df = attach_market_context(df, market_context, price_col=price_col)
 
         return df
