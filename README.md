@@ -7,7 +7,7 @@ A Python swing-trading research system that trains eight regime-specific ensembl
 ## Features
 
 - Trains one hybrid Random Forest + XGBoost classifier per factor category (market beta, growth/tech, small-cap, international/emerging, credit conditions, rates/recession, inflation/safe-haven, energy/commodity) instead of a single one-size-fits-all model.
-- Chronological, per-symbol train/validation/test split (`train/<category>/`, `validation/<category>/`, `test/<category>/`) so backtests are genuinely out-of-sample, not a re-run over training data -- and so a model's decision threshold can be tuned on validation without ever touching the data used to report final performance.
+- Chronological, calendar-aligned train/validation/test split (`train/<category>/`, `validation/<category>/`, `test/<category>/`): one pair of cutoff dates per category, applied to every symbol in it, so backtests are genuinely out-of-sample -- and so a model's decision threshold can be tuned on validation without ever touching the data used to report final performance. The cutoff is per category rather than per symbol because a category's symbols are near-duplicates of each other (market_beta's seven wrap the same US large-cap tape, at a median pairwise daily-return correlation of 0.98); splitting each symbol's own rows by percentage left 39-49% of some categories' test rows sitting on dates the model had already trained on through a sibling ticker. Both seams also carry a 10-row embargo, since a swing label reads 10 bars into the future.
 - Builds technical-analysis features with `ta`, `pandas`, `numpy`, and scikit-learn; label creation is vectorized (see `tests/test_labeling.py` for the equivalence check against the original loop implementation).
 - Model artifacts are versioned and integrity-checked: each `models/<category>/` directory has a `manifest.json` (library versions, hyperparameters, a hash of every training file used, and a code version) plus an HMAC-signed `manifest.sig`, verified before any `.pkl` is unpickled.
 - A category's decision threshold can be updated (e.g. after reviewing `scripts/select_thresholds.py`'s output) without retraining -- the trees don't depend on it, only how a predicted probability becomes a trade decision does.
@@ -48,13 +48,14 @@ Random-Tree-Prediction-Bot/
 |   |-- test_model_registry.py       # save/load signature + tamper/corruption rejection
 |   |-- test_detector.py             # walk_forward_backtest entry/exit/equity logic
 |   `-- test_security.py             # SecurityValidator + RequestRateLimiter
-|-- train/<category>/<symbol>.csv        # Oldest 55% per symbol (generated) -- the only
-|                                         # data any model is ever fit on
-|-- validation/<category>/<symbol>.csv   # Next 15% per symbol (generated) -- for choosing
-|                                         # things like decision_threshold without
-|                                         # touching test/
-|-- test/<category>/<symbol>.csv         # Most recent 30% per symbol (generated) -- touched
-|                                         # exactly once, to report final performance
+|-- train/<category>/<symbol>.csv        # Before the category's train cutoff (generated)
+|                                         # -- the only data any model is ever fit on
+|-- validation/<category>/<symbol>.csv   # Between the two cutoffs (generated) -- for
+|                                         # choosing things like decision_threshold
+|                                         # without touching test/
+|-- test/<category>/<symbol>.csv         # After the category's validation cutoff
+|                                         # (generated) -- touched exactly once, to
+|                                         # report final performance
 |-- models/<category>/               # model.pkl, scaler.pkl, features.pkl,
 |                                     # training_stats.pkl, manifest.json,
 |                                     # manifest.sig (generated)
@@ -125,7 +126,15 @@ python key_tester.py --key your_data_go_kr_service_key
 
 ### Build the Factor Datasets
 
-Downloads all 56 tickers across the 8 factor categories from Yahoo Finance and writes the chronological per-symbol split: oldest 55% to `train/`, next 15% to `validation/`, most recent 30% to `test/`.
+Downloads all 56 tickers across the 8 factor categories from Yahoo Finance and writes the calendar-aligned split. For each category it derives two cutoff dates from that category's pooled trading calendar -- targeting roughly 55/15/30 -- and applies the same two dates to every symbol in it, dropping 10 rows at each seam as an embargo.
+
+Because the cutoffs are derived from whatever history Yahoo returns that day, they move between runs. Pin them in `app.config.CALENDAR_SPLIT_CUTOFFS` when a run has to be reproducible:
+
+```python
+CALENDAR_SPLIT_CUTOFFS = {"growth_tech": ("2015-07-21", "2019-03-26")}
+```
+
+A symbol whose history begins after its category's train cutoff contributes no training rows (ARKK, which starts in late 2014, is the usual case). The run reports that rather than writing a near-empty file, and training excludes any symbol too short to compute the full feature set.
 
 ```bash
 python scripts/build_factor_datasets.py
@@ -149,15 +158,22 @@ You can also train a single category from the desktop app's `Train model` screen
 python scripts/select_thresholds.py
 ```
 
-For each category, this sweeps candidate thresholds against `validation/` only, picks the one with the best pooled Sharpe (requiring at least 5 trades to trust the pick over the existing default), then reports that threshold's performance on both validation and `test/` side by side -- the honest check of whether it actually holds up on data the selection process never saw. In practice this is a mixed bag: it improved risk-adjusted performance for some categories and made others worse, including one case where a validation-selected threshold that looked reasonable on validation lost money on test. Read the printed comparison before trusting any single category's number.
+For each category, this sweeps candidate thresholds against `validation/` only, then reports the chosen threshold's performance on both validation and `test/` side by side -- the honest check of whether it holds up on data the selection process never saw.
 
-See [MODEL_CALIBRATION_FINDINGS.md](MODEL_CALIBRATION_FINDINGS.md) for a worked example of this failure mode across all 8 categories -- why four of them were trading zero times at all, a stricter validation/test-agreement search than this script's own selection rule, and the category-appropriate `swing_threshold` retrain that ended up fixing most of them.
+Two guards decide whether a sweep produces a pick at all, both there because the obvious rule ("best pooled Sharpe among thresholds with at least 5 trades", which this script used to apply) reliably picked the luckiest thin sample:
+
+- **Candidates are scored on a shrunk return**, `mean(profit) - std(profit)/sqrt(n)` -- the per-trade return you can be reasonably confident is actually there. A thin sample pays a large penalty, so a modest edge over 200 trades outranks a spectacular one over five.
+- **The winner must be an interior peak**, scoring above the candidates on both sides. A maximum sitting against the trade floor or the edge of the grid is the constraint being reported, not an optimum -- moving the floor would just move the answer.
+
+When no candidate satisfies both, the script keeps the model's existing threshold and prints the shape it saw instead of a number it can't stand behind. On the current models that is five categories out of eight; the three with genuine interior peaks (`credit_conditions`, `growth_tech`, `inflation_safe_haven`) all improved on the shrunk score on `test/` as well, which the selection never looked at.
+
+See [MODEL_CALIBRATION_FINDINGS.md](MODEL_CALIBRATION_FINDINGS.md) for the earlier investigation this replaced -- why four categories were trading zero times at all, and the category-appropriate `swing_threshold` retrain that fixed most of them.
 
 To apply a threshold you've decided to keep, without retraining (the RF/XGBoost trees don't depend on it):
 
 ```python
 from app import model_registry
-model_registry.update_decision_threshold("growth_tech", 0.70)
+model_registry.update_decision_threshold("growth_tech", 0.35)
 ```
 
 ### Analyze One Symbol
@@ -186,7 +202,11 @@ There is no maintained PyInstaller spec for the current layout. An earlier `pyin
 
 ## Data and Model Notes
 
-Training expects CSV files in `train/<category>/`, one per symbol, named `<SYMBOL>.csv` (e.g. `train/growth_tech/AAPL.csv`). `validation/<category>/` and `test/<category>/` mirror the same layout. `scripts/build_factor_datasets.py` builds all three for you, split chronologically per symbol so train ends before validation begins, and validation ends before test begins -- never a random shuffle.
+Training expects CSV files in `train/<category>/`, one per symbol, named `<SYMBOL>.csv` (e.g. `train/growth_tech/AAPL.csv`). `validation/<category>/` and `test/<category>/` mirror the same layout. `scripts/build_factor_datasets.py` builds all three for you, split at two calendar cutoffs shared by every symbol in the category, so train ends before validation begins and validation ends before test begins -- for the category as a whole, not just per symbol, and never a random shuffle.
+
+Model features are all scale-free -- ratios, widths, positions, slopes, percentages of price, and rolling z-scores. Absolute price and volume levels (`sma_*`, `ema_*`, the Bollinger band edges, `atr_14`, `macd`, `on_balance_volume`, and the rest of `app.indicators.PRICE_LEVEL_COLUMNS`) are still computed, because stop-loss sizing and `macd_crossover` need them, but `app/trainer.py` excludes them from the feature set. A tree can only split at values it saw while fitting, and a symbol's price level in the test window routinely sits outside its entire training range: AAPL trains under a dollar and is tested above $100.
+
+Accuracy is not a meaningful score here and the training output doesn't lead with it. Swing labels run 0.6-8% of rows depending on category, so "never predict a swing" scores 92-99%. `train()` and `scripts/train_all_categories.py` report PR-AUC against the base rate, ROC-AUC, precision and recall, and print accuracy only beside the always-negative baseline it has to beat.
 
 Each `models/<category>/` directory holds:
 

@@ -1,5 +1,17 @@
 # Model Calibration Findings — 2026-08-24
 
+> **Superseded, 2026-08-29.** The numbers below were measured against the per-symbol
+> percentage split and the 108-feature set, both of which have since been replaced: the
+> dataset now uses one pair of calendar cutoffs per category, and absolute price/volume
+> levels are excluded from the feature set (89 features). No figure in this document
+> corresponds to anything currently in `models/` or `test/`. The `swing_threshold`
+> values in section 4 are still the ones in `app/config.py` and still land their
+> categories in the 2-8% positive-label band on the new split; the `decision_threshold`
+> values in section 4 have been rederived (see `scripts/select_thresholds.py` and the
+> README). What remains useful here is the reasoning -- why a uniform 15% swing
+> threshold silenced four categories, and why a naive Sharpe argmax on a handful of
+> trades is not a calibration.
+
 A record of a threshold-calibration investigation across all 8 factor-category models: why four categories were producing zero trades, what was tried, what actually changed, and what still shouldn't be trusted at face value. This is a point-in-time snapshot of one retrain against one fixed chronological split, not a permanent guarantee -- numbers here will drift the next time any category is retrained or the test window rolls forward.
 
 `models/` is gitignored, as it always has been in this project (rebuilt by `scripts/train_all_categories.py`). The retrained artifacts described here live only in the local `models/<category>/` directories on the machine this was run on -- this document (and the earlier `app/security.py` fix / test suite / `requirements.txt` in this same session) are what actually ship to the repo.

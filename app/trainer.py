@@ -13,14 +13,32 @@ Two distinct splits are in play, and it's worth being explicit about both:
    information across the split and inflates the reported score. This version instead
    holds out the most recent slice of each symbol's rows, chronologically, purely so
    `train()` has something to report progress against; it is not the out-of-sample
-   evaluation that matters (that's #1).
+   evaluation that matters (that's #1). A chronological cut alone still leaks, because
+   a swing label looks `lookforward_periods` bars into the future: the last rows before
+   the cut are labelled from bars that land on the validation side. So the cut carries
+   an embargo -- `lookforward_periods` rows immediately before it belong to neither
+   side (see `_chronological_internal_split`).
+
+Reported metrics: accuracy is deliberately not the headline. Positive labels run
+0.6-8% of rows depending on category, so "always predict no swing" scores 92-99%
+and beats every model this trainer has produced. `train()` prints and stores
+PR-AUC, ROC-AUC, precision and recall alongside accuracy *and* the majority-class
+baseline it has to beat, so a high accuracy can't be mistaken for a working model.
 """
 import os
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.preprocessing import StandardScaler
 
 from app.config import (
@@ -31,7 +49,7 @@ from app.config import (
 )
 from app.data_loader import DataProcessor
 from app.ensemble import HybridSwingEnsemble, compute_scale_pos_weight
-from app.indicators import TechnicalIndicators
+from app.indicators import PRICE_LEVEL_COLUMNS, TechnicalIndicators
 from app.labeling import create_swing_labels, effective_threshold
 
 try:
@@ -40,10 +58,16 @@ except ImportError:
     XGBClassifier = None
 
 INTERNAL_VALIDATION_FRACTION = 0.15
+
+# Raw OHLCV, bookkeeping columns, and the label columns themselves -- plus every
+# absolute price/volume level (app/indicators.py's PRICE_LEVEL_COLUMNS, which owns
+# that list and explains why they can't be features). Each excluded level has a
+# scale-free counterpart that *is* a feature, so nothing is lost but the part a
+# tree could never extrapolate past.
 EXCLUDE_FROM_FEATURES = [
     "open", "high", "low", "close", "adj_close", "volume", "dividends",
     "stock_splits", "symbol", "swing_label", "swing_profit_potential", "swing_risk",
-]
+] + list(PRICE_LEVEL_COLUMNS)
 
 
 class SwingTradeTrainer:
@@ -80,6 +104,7 @@ class SwingTradeTrainer:
         self.is_trained = False
         self.training_stats = {}
         self.scale_pos_weight = None
+        self._embargoed_rows = 0
 
     def load_historical_data(self, data_directory):
         all_files = sorted(
@@ -115,28 +140,67 @@ class SwingTradeTrainer:
             df_labeled = create_swing_labels(
                 df_features, self.swing_threshold, self.lookforward_periods, self.min_hold_periods
             )
+            # Fill gaps against this symbol's own history, before the concat. Filling
+            # afterwards lets one symbol supply another's values: a symbol with too
+            # little history for a 200-day window has no sma_200/price_sma_200_ratio
+            # column at all, and a frame-wide ffill/bfill hands it the neighbouring
+            # symbol's numbers instead of leaving it missing. Category-wide calendar
+            # cutoffs (scripts/build_factor_datasets.py) make short per-symbol training
+            # frames routine, so this is a live case, not a theoretical one.
+            fill_cols = [col for col in df_labeled.columns if col not in EXCLUDE_FROM_FEATURES]
+            df_labeled[fill_cols] = df_labeled[fill_cols].ffill().bfill()
             df_labeled["symbol"] = symbol
             grouped_frames.append(df_labeled)
 
-        df_labeled = pd.concat(grouped_frames, ignore_index=False).sort_values(["symbol"])
+        # kind="stable": _chronological_internal_split cuts each symbol's rows by
+        # position, so within-symbol chronological order has to survive this sort.
+        # The default quicksort makes no such guarantee for equal keys.
+        df_labeled = pd.concat(grouped_frames, ignore_index=False).sort_values(["symbol"], kind="stable")
 
         feature_cols = [col for col in df_labeled.columns if col not in EXCLUDE_FROM_FEATURES]
-        df_labeled[feature_cols] = df_labeled[feature_cols].ffill().bfill()
         df_labeled[feature_cols] = df_labeled[feature_cols].replace([np.inf, -np.inf], 0)
         df_clean = df_labeled.dropna(subset=feature_cols + ["swing_label"])
+
+        # A symbol short enough to be missing a whole feature column loses every row
+        # here. That's the right outcome, but say so rather than shrinking the training
+        # set silently.
+        dropped_symbols = sorted(set(df_labeled["symbol"]) - set(df_clean["symbol"]))
+        if dropped_symbols:
+            print(f"WARNING: {', '.join(dropped_symbols)} contributed no usable rows -- too "
+                  f"little history to compute every feature. Excluded from training.")
 
         self.feature_columns = feature_cols
         return df_clean[feature_cols], df_clean["swing_label"], df_clean
 
     def _chronological_internal_split(self, df_clean, X, y):
-        """Per-symbol chronological split, most recent INTERNAL_VALIDATION_FRACTION held
-        out -- see module docstring for why this isn't a random shuffle."""
-        train_mask = pd.Series(True, index=df_clean.index)
-        for _symbol, symbol_df in df_clean.groupby("symbol", sort=True):
-            split_at = int(len(symbol_df) * (1 - INTERNAL_VALIDATION_FRACTION))
-            held_out_index = symbol_df.index[split_at:]
-            train_mask.loc[held_out_index] = False
-        return X[train_mask], X[~train_mask], y[train_mask], y[~train_mask]
+        """Per-symbol chronological split with an embargo, most recent
+        INTERNAL_VALIDATION_FRACTION held out -- see module docstring for why this
+        isn't a random shuffle, and why a bare chronological cut still isn't enough.
+
+        The `lookforward_periods` rows immediately before each symbol's cut are
+        dropped from both sides: their swing labels are computed from bars that fall
+        on the validation side, so training on them lets the model see the outcome of
+        the very rows it is about to be scored on.
+
+        Masks are positional, not index-label based. df_clean's index is the date
+        index and symbols share dates, so `mask.loc[one_symbol_slice.index] = False`
+        also flips every other symbol's rows on those dates.
+        """
+        symbols = df_clean["symbol"].to_numpy()
+        train_mask = np.zeros(len(df_clean), dtype=bool)
+        validation_mask = np.zeros(len(df_clean), dtype=bool)
+        embargoed = 0
+
+        for symbol in np.unique(symbols):
+            positions = np.flatnonzero(symbols == symbol)
+            split_at = int(len(positions) * (1 - INTERNAL_VALIDATION_FRACTION))
+            embargo_at = max(0, split_at - self.lookforward_periods)
+            train_mask[positions[:embargo_at]] = True
+            validation_mask[positions[split_at:]] = True
+            embargoed += split_at - embargo_at
+
+        self._embargoed_rows = embargoed
+        return X[train_mask], X[validation_mask], y[train_mask], y[validation_mask]
 
     def train(self, data_directory):
         df = self.load_historical_data(data_directory)
@@ -150,7 +214,9 @@ class SwingTradeTrainer:
             print("WARNING: very few positive samples -- consider a lower swing threshold or more data.")
 
         X_train, X_val, y_train, y_val = self._chronological_internal_split(df_clean, X, y)
-        print(f"Internal split: {len(X_train)} train rows, {len(X_val)} validation rows (most recent {INTERNAL_VALIDATION_FRACTION:.0%} per symbol)")
+        print(f"Internal split: {len(X_train)} train rows, {len(X_val)} validation rows "
+              f"(most recent {INTERNAL_VALIDATION_FRACTION:.0%} per symbol), "
+              f"{self._embargoed_rows} rows embargoed at the cut ({self.lookforward_periods} per symbol)")
 
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_val_scaled = self.scaler.transform(X_val)
@@ -166,7 +232,23 @@ class SwingTradeTrainer:
 
         train_score = accuracy_score(y_train, y_train_pred)
         val_score = accuracy_score(y_val, y_val_pred)
-        print(f"Train accuracy: {train_score:.4f}  |  Internal validation accuracy: {val_score:.4f}")
+        metrics = self._validation_metrics(y_val, y_val_pred, y_val_proba[:, 1])
+
+        # PR-AUC first, and accuracy only next to the baseline it has to beat: with a
+        # ~1-8% positive rate, "always predict no swing" scores in the 90s and beats
+        # every model trained here, so a bare accuracy reads as success when it isn't.
+        if metrics["base_rate"] > 0:
+            print(f"Validation PR-AUC: {metrics['pr_auc']:.4f}  (base rate {metrics['base_rate']:.2%}, "
+                  f"which is what a random ranker scores -- "
+                  f"{metrics['pr_auc'] / metrics['base_rate']:.1f}x lift)")
+        else:
+            print("Validation PR-AUC: n/a (no positive labels in the validation slice)")
+        print(f"Validation ROC-AUC: {metrics['roc_auc']:.4f}  |  "
+              f"precision: {metrics['precision']:.4f}  |  recall: {metrics['recall']:.4f}  "
+              f"(at decision_threshold={self.decision_threshold:.2f})")
+        print(f"Validation accuracy: {val_score:.4f} vs. {metrics['majority_accuracy']:.4f} for always-negative "
+              f"-- {'BEATS' if val_score > metrics['majority_accuracy'] else 'does NOT beat'} the baseline. "
+              f"Train accuracy: {train_score:.4f}")
         print(classification_report(y_val, y_val_pred, zero_division=0))
         print(confusion_matrix(y_val, y_val_pred))
 
@@ -178,6 +260,14 @@ class SwingTradeTrainer:
             "train_score": float(train_score),
             "validation_score": float(val_score),
             "test_score": float(val_score),  # kept for backward-compatible readers
+            # The metrics that survive a 1-8% positive rate. validation_score above is
+            # accuracy, kept for existing readers (ui/, scripts/) but not the headline.
+            "validation_pr_auc": metrics["pr_auc"],
+            "validation_roc_auc": metrics["roc_auc"],
+            "validation_precision": metrics["precision"],
+            "validation_recall": metrics["recall"],
+            "validation_base_rate": metrics["base_rate"],
+            "validation_majority_accuracy": metrics["majority_accuracy"],
             "mean_positive_probability": float(y_val_proba[:, 1].mean()),
             "feature_importance": feature_importance,
             "model_type": "hybrid_random_forest_xgboost",
@@ -189,9 +279,26 @@ class SwingTradeTrainer:
             "min_hold_periods": self.min_hold_periods,
             "training_samples": len(X_train),
             "validation_samples": len(X_val),
+            "embargoed_samples": int(self._embargoed_rows),
         }
         self.is_trained = True
         return val_score
+
+    @staticmethod
+    def _validation_metrics(y_true, y_pred, positive_proba):
+        """Threshold-free ranking quality (PR-AUC, ROC-AUC) plus the operating point
+        the deployed decision_threshold actually lands on, and the accuracy an
+        always-negative model would get on the same rows."""
+        base_rate = float(np.mean(y_true)) if len(y_true) else 0.0
+        has_both_classes = 0 < base_rate < 1
+        return {
+            "pr_auc": float(average_precision_score(y_true, positive_proba)) if has_both_classes else float("nan"),
+            "roc_auc": float(roc_auc_score(y_true, positive_proba)) if has_both_classes else float("nan"),
+            "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+            "base_rate": base_rate,
+            "majority_accuracy": 1.0 - base_rate,
+        }
 
     def hyperparameters(self):
         return {

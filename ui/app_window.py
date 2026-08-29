@@ -418,9 +418,16 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         self.training_complete = True
         for line in result["log"].splitlines()[-80:]:
             self.training_log.append(f"[{self.now_time()}] {line}")
+        # PR-AUC against the base rate, not accuracy: swing labels are 1-8% of rows, so
+        # an accuracy in the high 90s is what "never predict a swing" scores.
+        stats = result["training_stats"]
+        base_rate = stats.get("validation_base_rate", 0.0)
         self.training_log.append(
             f"[{self.now_time()}] Training completed for '{result['category']}' "
-            f"with validation score {result['validation_score']:.4f}."
+            f"with validation PR-AUC {stats.get('validation_pr_auc', float('nan')):.4f} "
+            f"against a {base_rate:.2%} base rate "
+            f"(accuracy {result['validation_score']:.4f}, "
+            f"{stats.get('validation_majority_accuracy', 1 - base_rate):.4f} for always-negative)."
         )
         self.state.invalidate_detector(result["category"])
         self.add_alert("system", f"Model retraining completed for '{result['category']}'.")

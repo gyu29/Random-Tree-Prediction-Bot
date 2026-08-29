@@ -67,15 +67,28 @@ SYMBOL_TO_CATEGORY = {
 }
 
 # Per-category overrides for swing_threshold and decision_threshold, calibrated against
-# a real train/validation/test evaluation rather than guessed (see
-# MODEL_CALIBRATION_FINDINGS.md for the full investigation and numbers). The uniform
-# DEFAULT_SWING_THRESHOLD (0.15) turned out miscalibrated for lower-volatility
-# categories -- e.g. credit_conditions had so few genuine 15%-in-10-days moves that its
-# model never once reached a usable decision_threshold on the entire test set. A
-# category absent from either dict just uses the global default -- energy_commodity
-# needed neither override. scripts/train_all_categories.py applies both automatically,
-# so a fresh clone (with freshly-fetched data) reproduces this calibration rather than
-# silently retraining everything back to the uncalibrated defaults.
+# a real train/validation/test evaluation rather than guessed. A category absent from
+# either dict just uses the global default -- energy_commodity needs neither override.
+# scripts/train_all_categories.py applies both automatically, so a fresh clone (with
+# freshly-fetched data) reproduces this calibration rather than silently retraining
+# everything back to the uncalibrated defaults.
+#
+# swing_threshold decides what counts as a positive label, so changing one requires a
+# retrain. The uniform DEFAULT_SWING_THRESHOLD (0.15) is miscalibrated for
+# lower-volatility categories -- a 15% move inside ten days is a near-nonevent for
+# investment-grade credit or Treasuries, so under 0.6% of their training rows ever
+# qualified and those models learned to never predict a positive at all. Each override
+# below puts its category's positive-label rate in the 2-8% band that the two
+# categories needing no override (growth_tech 7.3%, energy_commodity 1.8%) sit in
+# naturally. See MODEL_CALIBRATION_FINDINGS.md for that investigation.
+#
+# decision_threshold only converts a predicted probability into a trade, so it can be
+# changed on a trained model without retraining (model_registry.update_decision_threshold).
+# These values come from scripts/select_thresholds.py, which sweeps candidates against
+# validation/ only and requires a candidate to be an interior peak on a shrunk-return
+# score before it will pick one. Five of the eight categories have no such peak and keep
+# the value they were trained with; that script's module docstring explains the rule and
+# its output records which categories are which.
 CALIBRATED_SWING_THRESHOLDS = {
     "credit_conditions": 0.05,
     "rates_recession": 0.05,
@@ -85,14 +98,26 @@ CALIBRATED_SWING_THRESHOLDS = {
     "market_beta": 0.08,
 }
 CALIBRATED_DECISION_THRESHOLDS = {
-    "credit_conditions": 0.10,
+    # Interior peaks found on validation/ (see scripts/select_thresholds.py):
+    "credit_conditions": 0.40,
+    "growth_tech": 0.35,
+    "inflation_safe_haven": 0.45,
+    # No interior peak; carried over from the previous calibration:
     "rates_recession": 0.45,
-    "inflation_safe_haven": 0.40,
     "small_cap": 0.40,
     "international_emerging": 0.10,
     "market_beta": 0.10,
-    "growth_tech": 0.70,
 }
+
+# Optional per-category pins for scripts/build_factor_datasets.py's calendar split,
+# as ("train_end", "validation_end") date strings: rows before train_end go to train,
+# rows in [train_end, validation_end) to validation, the rest to test. The script
+# derives these from the pooled trading calendar when a category is absent here, which
+# is the normal path -- pin a category only when a specific run has to be reproducible,
+# since yfinance returns a longer history every time it is called and derived cutoffs
+# move with it. See that script's module docstring for why the cutoff is per category
+# rather than per symbol.
+CALENDAR_SPLIT_CUTOFFS = {}
 
 KRX_MARKET_ENDPOINTS = {
     "stock": {

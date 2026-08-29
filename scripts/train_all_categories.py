@@ -3,9 +3,21 @@
 For each category: trains on train/<category>/*.csv, saves a signed/versioned
 model via app.model_registry, then evaluates on test/<category>/*.csv -- which
 is, by construction (see scripts/build_factor_datasets.py), strictly
-chronologically after that symbol's training data. That's the actual
-walk-forward, out-of-sample check; the "internal validation" score printed
+chronologically after every symbol's training data in that category. That's the
+actual walk-forward, out-of-sample check; the "internal validation" score printed
 during training (see app/trainer.py) is secondary.
+
+The test-split evaluation has two halves, and both are printed:
+
+  * Classification metrics -- PR-AUC, ROC-AUC, precision, recall, and accuracy
+    shown next to the always-negative baseline. Accuracy alone is not reportable
+    here: positive labels run 0.6-8% of rows, so predicting "no swing" on every
+    row scores 92-99% and beats anything this trainer produces. PR-AUC against
+    the base rate is the number that says whether the model ranks better than
+    chance.
+  * The walk-forward backtest -- trade count, win rate, realized return. A model
+    can rank well and still trade badly (and the reverse), so neither half
+    substitutes for the other.
 """
 import os
 import sys
@@ -13,6 +25,13 @@ import time
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -24,8 +43,61 @@ from app.config import (  # noqa: E402
 )
 from app.data_loader import DataProcessor, category_test_dir, list_categories  # noqa: E402
 from app.detector import NoModelAvailableError, SwingTradeDetector, walk_forward_backtest  # noqa: E402
+from app.indicators import TechnicalIndicators  # noqa: E402
+from app.labeling import create_swing_labels  # noqa: E402
 from app.market_data.alpha_vantage_provider import AlphaVantageProvider  # noqa: E402
 from app.trading_system import SwingTradingSystem  # noqa: E402
+
+
+def classification_metrics_on_test_split(category, detector):
+    """Scores every test row with the detector's own model and labels, and returns the
+    metrics that survive a heavily imbalanced target.
+
+    Labels are rebuilt with the same swing_threshold/lookforward/min_hold the model was
+    trained under (read back off the signed manifest via the detector), so the target
+    here is exactly the one the model was fit to predict.
+    """
+    test_dir = category_test_dir(category)
+    symbol_files = sorted(f for f in os.listdir(test_dir) if f.endswith(".csv")) if os.path.isdir(test_dir) else []
+
+    frames = []
+    for filename in symbol_files:
+        path = os.path.join(test_dir, filename)
+        try:
+            df = DataProcessor.load_and_validate_data(path)
+            features = TechnicalIndicators.create_all_indicators(df.drop(columns=["symbol"], errors="ignore"))
+            frames.append(create_swing_labels(
+                features, detector.swing_threshold, detector.lookforward_periods,
+                detector.training_stats.get("min_hold_periods", 3),
+            ))
+        except Exception:
+            continue  # the backtest half reports this symbol's error already
+    if not frames:
+        return None
+
+    labeled = pd.concat(frames)
+    for feature in detector.feature_columns:
+        if feature not in labeled.columns:
+            labeled[feature] = 0.0
+    X = labeled[detector.feature_columns].ffill().bfill().replace([np.inf, -np.inf], 0).fillna(0)
+    y = labeled["swing_label"].astype(int).to_numpy()
+
+    probabilities = detector.model.predict_proba(detector.scaler.transform(X))[:, 1]
+    predictions = (probabilities >= detector.decision_threshold).astype(int)
+
+    base_rate = float(y.mean()) if len(y) else 0.0
+    has_both_classes = 0 < base_rate < 1
+    return {
+        "rows": len(y),
+        "base_rate": base_rate,
+        "accuracy": float(accuracy_score(y, predictions)),
+        "majority_accuracy": 1.0 - base_rate,
+        "precision": float(precision_score(y, predictions, zero_division=0)),
+        "recall": float(recall_score(y, predictions, zero_division=0)),
+        "pr_auc": float(average_precision_score(y, probabilities)) if has_both_classes else float("nan"),
+        "roc_auc": float(roc_auc_score(y, probabilities)) if has_both_classes else float("nan"),
+        "signals": int(predictions.sum()),
+    }
 
 
 def evaluate_on_test_split(category, detector):
@@ -72,7 +144,8 @@ def train_and_evaluate_category(system, category):
     elapsed = time.time() - start
     stats = train_result["training_stats"]
     print(f"Trained in {elapsed:.1f}s | swing_threshold={swing_threshold:.0%} "
-          f"| validation_score={train_result['validation_score']:.4f} "
+          f"| internal validation PR-AUC={stats['validation_pr_auc']:.4f} "
+          f"(base rate {stats['validation_base_rate']:.2%}) "
           f"| scale_pos_weight={stats['scale_pos_weight']:.2f} "
           f"| effective_swing_threshold={stats['effective_swing_threshold']:.2%}")
 
@@ -87,6 +160,21 @@ def train_and_evaluate_category(system, category):
     detector = SwingTradeDetector(category, provider)
     if not detector.is_ready:
         raise NoModelAvailableError(f"Just-trained category '{category}' failed to reload")
+
+    metrics = classification_metrics_on_test_split(category, detector)
+    if metrics is None:
+        print("Out-of-sample test-split classification: no readable test files")
+    else:
+        beats = "BEATS" if metrics["accuracy"] > metrics["majority_accuracy"] else "does NOT beat"
+        lift = metrics["pr_auc"] / metrics["base_rate"] if metrics["base_rate"] else float("nan")
+        print(f"Out-of-sample test-split classification ({metrics['rows']} rows, "
+              f"base rate {metrics['base_rate']:.2%}):")
+        print(f"  PR-AUC={metrics['pr_auc']:.4f} ({lift:.1f}x base rate)  "
+              f"ROC-AUC={metrics['roc_auc']:.4f}  "
+              f"precision={metrics['precision']:.1%}  recall={metrics['recall']:.1%}  "
+              f"signals={metrics['signals']}")
+        print(f"  accuracy={metrics['accuracy']:.1%} vs. {metrics['majority_accuracy']:.1%} for "
+              f"always-negative -- {beats} the baseline")
 
     combined, per_symbol = evaluate_on_test_split(category, detector)
     print(f"Out-of-sample test-split backtest: {combined['num_trades']} trades, "
@@ -104,7 +192,16 @@ def train_and_evaluate_category(system, category):
         "swing_threshold": swing_threshold,
         "decision_threshold": detector.decision_threshold,
         "validation_score": train_result["validation_score"],
+        "validation_pr_auc": stats["validation_pr_auc"],
         "scale_pos_weight": stats["scale_pos_weight"],
+        "test_base_rate": metrics["base_rate"] if metrics else float("nan"),
+        "test_pr_auc": metrics["pr_auc"] if metrics else float("nan"),
+        "test_roc_auc": metrics["roc_auc"] if metrics else float("nan"),
+        "test_precision": metrics["precision"] if metrics else float("nan"),
+        "test_recall": metrics["recall"] if metrics else float("nan"),
+        "test_beats_baseline": (
+            bool(metrics["accuracy"] > metrics["majority_accuracy"]) if metrics else False
+        ),
         "test_trades": combined["num_trades"],
         "test_win_rate": combined["win_rate"],
         "test_avg_profit": combined["avg_profit"],
