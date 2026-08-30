@@ -167,7 +167,12 @@ SYMBOL_TO_CATEGORY = {
 # the value they were trained with; that script's module docstring explains the rule and
 # its output records which categories are which.
 CALIBRATED_SWING_THRESHOLDS = {
-    "credit_conditions": 0.05,
+    # 3%, not the 5% the other low-volatility categories use: at 5% only 1.78% of
+    # credit_conditions' rows were positive and its calibration slice held six of them,
+    # below app.ensemble.MIN_POSITIVES_FOR_CALIBRATION, so the model could not be
+    # calibrated and was gated for that reason alone. 3% gives a 5.28% positive rate and
+    # 78 calibration positives. See app.labeling.SWING_THRESHOLD_FLOOR.
+    "credit_conditions": 0.03,
     "rates_recession": 0.05,
     "inflation_safe_haven": 0.07,
     "small_cap": 0.08,
@@ -184,11 +189,11 @@ CALIBRATED_DECISION_THRESHOLDS = {
     "market_beta": 0.0415,
     "energy_commodity": 0.0429,
     "inflation_safe_haven": 0.1864,
-    # No floor exists for these; all four are gated by CATEGORIES_FAILING_VALIDATION, so
+    "credit_conditions": 0.0075,
+    # No floor exists for these; all three are gated by CATEGORIES_FAILING_VALIDATION, so
     # the values are inert and only keep the Backtest page reproducible.
     "small_cap": 0.0011,
     "growth_tech": 0.0072,
-    "credit_conditions": 0.25,
     "rates_recession": 0.45,
 }
 
@@ -209,6 +214,7 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # Edge over the model-off null on test/, in standard errors, at the floor below:
 #
 #   ship  international_emerging  floor 1.61%   +2.67 SE   2298 trades
+#   ship  credit_conditions       floor 0.75%   +2.16 SE   1094 trades
 #   ship  inflation_safe_haven    floor 18.64%  +2.16 SE    419 trades
 #   ship  energy_commodity        floor 4.29%   +1.68 SE    636 trades
 #   ship  market_beta             floor 4.15%   +1.16 SE    265 trades
@@ -218,16 +224,17 @@ CALIBRATED_DECISION_THRESHOLDS = {
 #   GATE  rates_recession  inverted.
 #   GATE  growth_tech      every bin non-negative from the lowest upward, so no floor
 #         excludes anything: a high reading does not indicate a better trade.
-#   GATE  credit_conditions  not calibrated -- 6 positives in its calibration slice
-#         against app.ensemble.MIN_POSITIVES_FOR_CALIBRATION, because its swing events
-#         cluster early and the recent third of its training window holds almost none.
-#         It scores +2.11 SE over its null at its inherited threshold, which is the most
-#         interesting number in this block and cannot be acted on: without calibration
-#         that threshold is an arbitrary point on an uninterpretable scale. Worth
-#         revisiting with a different swing_threshold.
+# credit_conditions was gated here until 2026-08-30 for being uncalibratable: at a 5%
+# swing_threshold only six positive examples fell in its calibration slice. Lowering that
+# threshold to 3% -- a real move for investment-grade credit, see
+# app.labeling.SWING_THRESHOLD_FLOOR -- gave it 78, and it calibrates. Its marginal-return
+# curve is now the cleanest of the eight, rising monotonically from +0.04% to +0.36% per
+# trade across probability bands. The +2.11 SE it showed while gated was not an artifact;
+# it was a real signal on a scale nobody could read.
 #
 # Purged walk-forward cross-validation (scripts/walk_forward_cv.py, 5 expanding-window
-# folds), re-run on the fixed path. Folds in which the category beat its own null, out
+# folds), re-run on the fixed path. These predate credit_conditions' 3% retrain, so that
+# category has no fold evidence at its current settings; the other seven are current. Folds in which the category beat its own null, out
 # of the folds where enough trades fired to compare:
 #
 #   international_emerging  5/5   PR-AUC 0.283 +/- 0.129   ROC-AUC 0.859 +/- 0.015
@@ -276,10 +283,6 @@ CATEGORIES_FAILING_VALIDATION = {
     "growth_tech": (
         "This model's probability does not rank trades: a high reading does not indicate "
         "a better trade than a low one. Not a signal, whatever the number says."
-    ),
-    "credit_conditions": (
-        "This model could not be calibrated (too few positive examples), so its scores "
-        "are not probabilities and cannot be acted on."
     ),
 }
 
