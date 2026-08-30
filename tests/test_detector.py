@@ -212,14 +212,15 @@ def test_no_reentry_while_position_is_open():
     assert all(trade["exit_reason"] == "Max time" for trade in trades)
 
 
-def test_position_opened_at_end_of_decision_window_is_never_closed_or_recorded():
-    """Characterizes real, current behavior of walk_forward_backtest, not a desired
-    outcome: entry AND exit checking both live inside `if decision_start <= index <
-    decision_end`, so a position opened on the last eligible bar (decision_end - 1)
-    has no later in-window bar left to ever close it -- not even via Max-time -- even
-    though the equity curve still marks it to market. If this function is ever changed
-    to close such positions (e.g. by letting exit-checking run past decision_end), this
-    test should be updated deliberately rather than left to fail as a surprise regression.
+def test_position_opened_on_the_last_eligible_bar_is_still_closed_and_recorded():
+    """Entries are confined to the decision window; exits are not.
+
+    Both used to live inside `if decision_start <= index < decision_end`, so a position
+    opened on the last eligible bar had no later in-window bar to close on -- not even by
+    max-time. It was dropped from trades and win_rate while the equity curve went on
+    marking it to market, so the two reported numbers described different sets of trades.
+    The window ends lookforward_periods bars before the data does precisely so that every
+    position taken inside it has room to reach an exit.
     """
     closes = np.full(N, 100.0)
     closes[DECISION_END:] = 50.0  # -50% starting the bar right after the window closes
@@ -230,14 +231,31 @@ def test_position_opened_at_end_of_decision_window_is_never_closed_or_recorded()
 
     result = walk_forward_backtest(detector, df, decision_start=DECISION_START)
 
-    assert result["num_trades"] == 0
-    assert result["trades"] == []
-    assert result["win_rate"] == 0
-    assert result["avg_profit"] == 0.0
-    # ...yet the equity curve still reflects the unrealized -50% on the position that
-    # was opened but never recorded as closed -- num_trades/win_rate say "nothing
-    # happened" while total_return shows the real mark-to-market loss.
+    assert result["num_trades"] == 1
+    trade = result["trades"][0]
+    assert trade["exit_reason"] == "Stop-loss"
+    assert trade["profit_pct"] == pytest.approx(-0.5, abs=1e-6)
+    # The two numbers now describe the same trade: the loss is realized, not merely
+    # marked, and win_rate counts the position that num_trades reports.
+    assert result["win_rate"] == 0.0
+    assert result["avg_profit"] == pytest.approx(-0.5, abs=1e-6)
     assert result["total_return"] == pytest.approx(-0.5, abs=1e-6)
+
+
+def test_trade_count_and_equity_curve_agree_on_the_last_bar():
+    """The general form of the defect above: every position the backtest opens must end
+    up in `trades`, whatever bar it was opened on."""
+    closes = np.linspace(100.0, 130.0, N)
+    df = _make_ohlcv_df(closes)
+    probabilities = np.full(WINDOW_LEN, 0.90)  # enter as early and often as possible
+    result = walk_forward_backtest(_FakeDetector(probabilities), df, decision_start=DECISION_START)
+
+    realized = 1.0
+    for trade in result["trades"]:
+        realized *= 1 + trade["profit_pct"]
+    assert result["total_return"] == pytest.approx(realized - 1, abs=1e-9), (
+        "equity curve ends on an unrealized position that never reached `trades`"
+    )
 
 
 def test_buy_hold_curve_matches_price_ratio_to_first_close():

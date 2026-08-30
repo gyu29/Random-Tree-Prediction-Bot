@@ -157,7 +157,13 @@ def evaluate_on_test_split(category, detector, decision_threshold=None):
         "win_rate": (len([p for p in profits if p > 0]) / len(profits)) if profits else 0.0,
         "avg_profit": float(np.mean(profits)) if profits else 0.0,
         "std_profit": float(np.std(profits, ddof=1)) if len(profits) > 1 else 0.0,
-        "total_return_compounded": float(np.prod([1 + p for p in profits]) - 1) if profits else 0.0,
+        # Sum, not product. Multiplying every trade's return together models one account
+        # that took all of them back to back with everything reinvested -- but these
+        # trades come from dozens of symbols and overlap in time, so no account could
+        # have taken them in series. That product reached 8.66e+09 for growth_tech, a
+        # number with no interpretation that still read as a return. The sum is what an
+        # equal unit staked on each trade would have earned, which is a real quantity.
+        "total_profit_equal_weight": float(np.sum(profits)) if profits else 0.0,
     }
     return combined, per_symbol
 
@@ -234,7 +240,7 @@ def train_and_evaluate_category(system, category):
           f"({null['edge_in_standard_errors']:+.2f} standard errors) -- {null['verdict']}")
     print(f"Out-of-sample test-split backtest: {combined['num_trades']} trades, "
           f"win_rate={combined['win_rate']:.1%}, avg_profit={combined['avg_profit']:.2%}, "
-          f"compounded_return={combined['total_return_compounded']:.2%}")
+          f"total_profit={combined['total_profit_equal_weight']:.2f}x one unit staked per trade")
     for row in per_symbol:
         if "error" in row:
             print(f"  {row['symbol']}: skipped ({row['error']})")
@@ -264,7 +270,7 @@ def train_and_evaluate_category(system, category):
         "test_trades": combined["num_trades"],
         "test_win_rate": combined["win_rate"],
         "test_avg_profit": combined["avg_profit"],
-        "test_compounded_return": combined["total_return_compounded"],
+        "test_total_profit": combined["total_profit_equal_weight"],
     }
 
 

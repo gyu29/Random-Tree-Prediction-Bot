@@ -108,7 +108,9 @@ def pooled_metrics(detector, scored_data, threshold):
     return {
         "num_trades": count,
         "win_rate": (len([p for p in all_profits if p > 0]) / count) if count else 0.0,
-        "compounded_return": float(np.prod([1 + p for p in all_profits]) - 1) if all_profits else 0.0,
+        # Sum, not product -- see scripts/train_all_categories.py for why compounding
+        # trades drawn from many symbols in series describes an account nobody could hold.
+        "total_profit_equal_weight": float(np.sum(all_profits)) if all_profits else 0.0,
         "sharpe": float(mean_profit / np.std(returns) * (12 ** 0.5)) if np.std(returns) else 0.0,
         "mean_profit": mean_profit,
         "standard_error": standard_error if count > 1 else 0.0,
@@ -199,7 +201,7 @@ def _select(sweep, default_threshold):
 def _format_metrics(metrics):
     return (f"{metrics['num_trades']:4d} trades  win {metrics['win_rate']:5.1%}  "
             f"mean {metrics['mean_profit']:+.2%}  score {metrics['score']:+.2%}  "
-            f"sharpe {metrics['sharpe']:5.2f}  return {metrics['compounded_return']:+.1%}")
+            f"sharpe {metrics['sharpe']:5.2f}  total {metrics['total_profit_equal_weight']:+.1f}u")
 
 
 def main():

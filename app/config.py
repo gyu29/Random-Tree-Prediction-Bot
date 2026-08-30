@@ -110,10 +110,22 @@ FACTOR_CATEGORIES = {
     # Nobody could trade the raw yield anyway; a real position here is a bond ETF.
     # The list now spans the curve from 1-month bills to 25-year zeros.
     "rates_recession": [
-        "TLT", "IEF", "SHY", "GOVT", "BIL", "TBT", "IEI", "SHV", "SPTL", "SPTS",
-        "SPTI", "VGSH", "VGIT", "VGLT", "SCHO", "SCHR", "SCHQ", "EDV", "ZROZ", "TLH",
-        "TBF", "STIP", "VTIP", "TMV",
+        # One fund per distinct exposure, not one per issuer. Widening this category to
+        # 24 funds made it *less* informative, not more: SPTL, VGLT, SCHQ and TLT are the
+        # same long-Treasury trade four times over (pairwise correlation 0.997), and TBF,
+        # TBT and TMV are one inverse trade at three leverages. Ten such duplicates were
+        # removed. What is left spans bills, each segment of the curve, zero-coupon,
+        # broad, TIPS and inverse.
+        #
+        # Judged on effective independent series -- n / (1 + (n-1) * mean correlation),
+        # which accounts for the whole correlation structure rather than the median pair
+        # this project had been quoting -- these 14 score 3.70, against 2.96 for the 24
+        # they replace and 3.04 for the original 7, on 66k rows against the original's
+        # 36k. Better than both predecessors on both axes.
+        "BIL", "SHV", "SHY", "IEI", "IEF", "TLH", "TLT", "ZROZ", "EDV", "GOVT",
+        "STIP", "VTIP", "TBT", "TMV",
     ],
+
     # FXY (Japanese Yen, a traditional safe-haven currency) rather than ^VIX: the raw
     # CBOE Volatility Index isn't a tradable instrument (no ETF tracks the spot index
     # 1:1 -- VIX ETPs track VIX futures and behave very differently, with heavy
@@ -185,16 +197,16 @@ CALIBRATED_DECISION_THRESHOLDS = {
     # so most are small -- a 4% chance of a swing is a high reading against a base rate
     # under 1%. Do not round these to two decimals; 0.0011 becomes 0.00, which would turn
     # the app into an unconditional trader.
-    "international_emerging": 0.0161,
-    "market_beta": 0.0415,
-    "energy_commodity": 0.0429,
-    "inflation_safe_haven": 0.1864,
     "credit_conditions": 0.0075,
-    # No floor exists for these; all three are gated by CATEGORIES_FAILING_VALIDATION, so
-    # the values are inert and only keep the Backtest page reproducible.
+    "growth_tech": 0.0124,
+    "international_emerging": 0.0161,
+    "energy_commodity": 0.0429,
+    "market_beta": 0.0515,
+    "inflation_safe_haven": 0.1864,
+    "rates_recession": 0.3238,
+    # No floor exists; gated by CATEGORIES_FAILING_VALIDATION, so this value is inert and
+    # only keeps the Backtest page reproducible.
     "small_cap": 0.0011,
-    "growth_tech": 0.0072,
-    "rates_recession": 0.45,
 }
 
 # Categories whose model must not be presented as a trading signal.
@@ -205,32 +217,61 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # exists whose bins are all non-negative and whose bottom bin is excluded -- only, that
 # is, if the model's ranking separates profitable trades from unprofitable ones.
 #
-# Measured 2026-08-30, after removing a look-ahead in the backtest scoring path that had
-# been back-filling roughly 10% of every decision window from its own future. Every
-# earlier version of these figures was computed through that leak; correcting it moved
-# energy_commodity from "inverted" to a usable floor and moved inflation_safe_haven's
-# floor by a factor of fifty, so nothing measured before it is quoted here.
+# Measured 2026-08-30, after three fixes that each changed the answer: a look-ahead in
+# the backtest scoring path that back-filled ~10% of every decision window from its own
+# future; positions opened on the last eligible bar never being closed or counted; and
+# rates_recession's ticker list, which had been widened into four copies of the same
+# long-Treasury trade. Nothing measured before those is quoted here.
 #
-# Edge over the model-off null on test/, in standard errors, at the floor below:
+# Edge over the model-off null on test/, in standard errors, at the floor below. The
+# floor is what decides shipping; the edge is how much confidence to place in it:
 #
-#   ship  international_emerging  floor 1.61%   +2.67 SE   2298 trades
-#   ship  credit_conditions       floor 0.75%   +2.16 SE   1094 trades
-#   ship  inflation_safe_haven    floor 18.64%  +2.16 SE    419 trades
-#   ship  energy_commodity        floor 4.29%   +1.68 SE    636 trades
-#   ship  market_beta             floor 4.15%   +1.16 SE    265 trades
+#   ship  international_emerging  floor 1.61%   +2.68 SE   2303 trades
+#   ship  inflation_safe_haven    floor 18.64%  +2.40 SE    425 trades
+#   ship  credit_conditions       floor 0.75%   +2.12 SE   1095 trades
+#   ship  rates_recession         floor 32.38%  +1.95 SE    213 trades
+#   ship  energy_commodity        floor 4.29%   +1.58 SE    638 trades
+#   ship  market_beta             floor 5.15%   +1.03 SE    248 trades
+#   ship  growth_tech             floor 1.24%   +0.99 SE   2623 trades
 #
-#   GATE  small_cap        inverted: the trades it rates highest lose money, and at its
-#         old floor it is +0.33 SE against its null -- indistinguishable from ignoring it.
-#   GATE  rates_recession  inverted.
-#   GATE  growth_tech      every bin non-negative from the lowest upward, so no floor
-#         excludes anything: a high reading does not indicate a better trade.
-# credit_conditions was gated here until 2026-08-30 for being uncalibratable: at a 5%
-# swing_threshold only six positive examples fell in its calibration slice. Lowering that
-# threshold to 3% -- a real move for investment-grade credit, see
-# app.labeling.SWING_THRESHOLD_FLOOR -- gave it 78, and it calibrates. Its marginal-return
-# curve is now the cleanest of the eight, rising monotonically from +0.04% to +0.36% per
-# trade across probability bands. The +2.11 SE it showed while gated was not an artifact;
-# it was a real signal on a scale nobody could read.
+#   GATE  small_cap  inverted: marginal return falls as predicted probability rises, so
+#         the trades a floor would keep are the losing ones. The only category with no
+#         floor at all, and +0.37 SE against its null -- indistinguishable from ignoring it.
+#
+#         Not a labelling or calibration problem, unlike credit_conditions': at its 8%
+#         swing_threshold it produces a 4.51% positive rate, inside the target band, and
+#         calibrates cleanly on 294 positives. Its ranking is simply anti-predictive, and
+#         no choice of threshold or label definition addresses that.
+#
+#         Its 4-of-5 cross-validation folds beating the null looked like a contradiction
+#         and is not: those were measured at an inherited threshold of 0.0011, which
+#         admits essentially every trade. That figure was measuring the entry/exit
+#         machinery with the model switched off, not the model.
+#
+# growth_tech and market_beta ship on the letter of the rule and little else. A floor
+# exists for both, but their edge over doing nothing is within one standard error, which
+# is to say unmeasured rather than established. rates_recession only has a floor at all
+# because its ticker list was pruned; growth_tech only has one because the last-bar
+# defect was fixed. Neither should be read as a strong result.
+#
+# Regime dependence, measured on validation/ and test/ separately by bucketing each
+# trade on the VIX at entry. Three categories lose their edge when volatility is high,
+# consistently on both splits: growth_tech (+0.49% calm / -0.62% stress on validation,
+# +0.05% / -0.12% on test), international_emerging (-0.05% / -1.05%, +0.17% / -0.53%)
+# and market_beta, which is negative in both regimes on both splits. Treat any signal
+# from those three above VIX 30 as unsupported.
+#
+# No guard is fitted for it. The stress samples run 20-40 trades on validation, and a
+# cutoff chosen to make those look good would be the same overfitting the rest of this
+# pipeline was cleaned of. Fixing it properly needs either more stress data -- and high-
+# VIX periods are rare by construction, so there is none to find -- or a regime-conditional
+# model, which is real work rather than a threshold.
+#
+# One correction to an earlier claim recorded here: credit_conditions was described as
+# failing in credit stress, on the strength of a -3.32 SE cross-validation fold covering
+# March 2020 and a -0.45% test bucket. It does not replicate. On validation its stress
+# edge is +0.13%, and the two negative readings are the same event seen twice. It is a
+# single episode, not an established weakness, and the earlier wording overstated it.
 #
 # Purged walk-forward cross-validation (scripts/walk_forward_cv.py, 5 expanding-window
 # folds), re-run on the fixed path. Folds in which the category beat its own null, out of
@@ -289,14 +330,6 @@ CATEGORIES_FAILING_VALIDATION = {
     "small_cap": (
         "This model's ranking is inverted -- the trades it rates highest are the ones "
         "that lose money. Its output is not a trading signal."
-    ),
-    "rates_recession": (
-        "This model's ranking is inverted -- the trades it rates highest are the ones "
-        "that lose money. Its output is not a trading signal."
-    ),
-    "growth_tech": (
-        "This model's probability does not rank trades: a high reading does not indicate "
-        "a better trade than a low one. Not a signal, whatever the number says."
     ),
 }
 

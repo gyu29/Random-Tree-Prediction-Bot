@@ -11,7 +11,6 @@ on half of `swing_threshold` while showing users the full value -- that mismatch
 is what this shared helper closes.
 """
 import numpy as np
-import pandas as pd
 
 
 # Floor on the upside move a label requires. It exists to stop a threshold collapsing to

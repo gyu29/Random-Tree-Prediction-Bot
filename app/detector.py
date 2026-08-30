@@ -1,7 +1,6 @@
 import math
 
 import numpy as np
-import pandas as pd
 
 from app import model_registry
 from app.config import (
@@ -295,36 +294,44 @@ def simulate_trades(detector, scoring, decision_threshold=None):
         date = features.index[index]
         price = float(row["close"])
 
-        if decision_start <= index < decision_end:
+        # Entries are confined to the decision window; exits are not. Both used to sit
+        # inside it, so a position opened on the last eligible bar had no later in-window
+        # bar to close on -- not even by max-time -- and was dropped from trades and
+        # win_rate while the equity curve went on marking it to market, leaving the two
+        # reported numbers describing different sets of trades. The window ends
+        # lookforward_periods bars before the data does precisely so every position taken
+        # inside it has room to run to its max-time exit.
+        in_window = decision_start <= index < decision_end
+        if in_window:
             probability = float(window_probabilities[index - decision_start])
             peak_probability = max(peak_probability, probability)
 
-            if position is None and probability >= decision_threshold:
-                stop, take = detector.calculate_stop_take_profit(price, float(row.get("atr_14", 0)))
-                position = {
-                    "entry_date": date, "entry_index": index, "entry_price": price,
-                    "entry_probability": probability, "stop_loss": stop, "take_profit": take,
-                }
-            elif position is not None:
-                bars_held = index - position["entry_index"]
-                days_held = (date - position["entry_date"]).days
-                profit = (price - position["entry_price"]) / position["entry_price"]
-                reason = None
-                if price <= position["stop_loss"]:
-                    reason = "Stop-loss"
-                elif price >= position["take_profit"]:
-                    reason = "Take-profit"
-                elif bars_held >= lookforward_periods:
-                    reason = "Max time"
-                if reason:
-                    trades.append({
-                        "entry_date": position["entry_date"], "exit_date": date,
-                        "entry_price": position["entry_price"], "exit_price": price,
-                        "days_held": days_held, "profit_pct": profit,
-                        "entry_probability": position["entry_probability"], "exit_reason": reason,
-                    })
-                    realized_equity *= (1 + profit)
-                    position = None
+        if position is not None:
+            bars_held = index - position["entry_index"]
+            days_held = (date - position["entry_date"]).days
+            profit = (price - position["entry_price"]) / position["entry_price"]
+            reason = None
+            if price <= position["stop_loss"]:
+                reason = "Stop-loss"
+            elif price >= position["take_profit"]:
+                reason = "Take-profit"
+            elif bars_held >= lookforward_periods:
+                reason = "Max time"
+            if reason:
+                trades.append({
+                    "entry_date": position["entry_date"], "exit_date": date,
+                    "entry_price": position["entry_price"], "exit_price": price,
+                    "days_held": days_held, "profit_pct": profit,
+                    "entry_probability": position["entry_probability"], "exit_reason": reason,
+                })
+                realized_equity *= (1 + profit)
+                position = None
+        elif in_window and probability >= decision_threshold:
+            stop, take = detector.calculate_stop_take_profit(price, float(row.get("atr_14", 0)))
+            position = {
+                "entry_date": date, "entry_index": index, "entry_price": price,
+                "entry_probability": probability, "stop_loss": stop, "take_profit": take,
+            }
 
         if position is not None:
             open_profit = (price - position["entry_price"]) / position["entry_price"]
