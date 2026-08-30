@@ -233,13 +233,13 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # it was a real signal on a scale nobody could read.
 #
 # Purged walk-forward cross-validation (scripts/walk_forward_cv.py, 5 expanding-window
-# folds), re-run on the fixed path. These predate credit_conditions' 3% retrain, so that
-# category has no fold evidence at its current settings; the other seven are current. Folds in which the category beat its own null, out
-# of the folds where enough trades fired to compare:
+# folds), re-run on the fixed path. Folds in which the category beat its own null, out of
+# the folds where enough trades fired to compare:
 #
 #   international_emerging  5/5   PR-AUC 0.283 +/- 0.129   ROC-AUC 0.859 +/- 0.015
 #   inflation_safe_haven    4/5   PR-AUC 0.169 +/- 0.069   ROC-AUC 0.866 +/- 0.046
 #   energy_commodity        3/5   PR-AUC 0.182 +/- 0.072   ROC-AUC 0.845 +/- 0.045
+#   credit_conditions       3/5   PR-AUC 0.195 +/- 0.113   ROC-AUC 0.838 +/- 0.030
 #   market_beta             2/4   PR-AUC 0.262 +/- 0.207   ROC-AUC 0.909 +/- 0.032
 #
 # market_beta is the one the folds do not corroborate: two of four is a tie, not a
@@ -248,6 +248,20 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # should never be quoted on its own. It ships because the stated criterion is the
 # marginal-return curve and it has a floor, but of the four it is the one to drop first
 # if the evidence has to be narrowed.
+#
+# credit_conditions carries a caveat its 3/5 hides, and it is the sharpest thing
+# cross-validation has surfaced here. Its folds read +0.70, +2.04, +0.48, -3.32, -0.12
+# standard errors. The -3.32 fold validates on the block ending 2020-04-08, which
+# contains the March 2020 credit dislocation -- VIX peaked at 82.7 inside it against a
+# 17.6 median across the whole series. The model works in ordinary conditions and fails,
+# by the widest margin of any fold measured anywhere in this project, in precisely the
+# event the category is named for. It ships because the curve is clean, a majority of
+# folds beat the null, and it is +2.16 SE over that null on test -- but it should not be
+# leaned on during a credit stress event, which is the only time anyone would reach for
+# it. That is a modelling problem, not a threshold one.
+#
+# The pooled sweep independently reselected credit_conditions' 0.75% floor, the second
+# category where the two methods converge.
 #
 # international_emerging is the opposite case and the strongest result in the project:
 # it beat its null in every fold, and cross-validation independently selected 1.61% --
