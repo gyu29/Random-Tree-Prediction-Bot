@@ -227,14 +227,38 @@ CALIBRATED_DECISION_THRESHOLDS = {
 #         revisiting with a different swing_threshold.
 #
 # Purged walk-forward cross-validation (scripts/walk_forward_cv.py, 5 expanding-window
-# folds) was run before this fix and its per-fold figures share the same leak, so they
-# are not reproduced here. What it established structurally still stands: PR-AUC varies
-# widely across regimes (market_beta 0.26 +/- 0.21), so no point estimate should be
-# quoted alone, and the pooled sweep disagrees with the marginal curve about thresholds.
-# The curve sets them: it asks whether every probability band above a floor is
-# profitable, where the pooled sweep asks only whether the average one is, and an average
-# can be carried by a single good band. Re-running the folds on the fixed path is the
-# obvious next check.
+# folds), re-run on the fixed path. Folds in which the category beat its own null, out
+# of the folds where enough trades fired to compare:
+#
+#   international_emerging  5/5   PR-AUC 0.283 +/- 0.129   ROC-AUC 0.859 +/- 0.015
+#   inflation_safe_haven    4/5   PR-AUC 0.169 +/- 0.069   ROC-AUC 0.866 +/- 0.046
+#   energy_commodity        3/5   PR-AUC 0.182 +/- 0.072   ROC-AUC 0.845 +/- 0.045
+#   market_beta             2/4   PR-AUC 0.262 +/- 0.207   ROC-AUC 0.909 +/- 0.032
+#
+# market_beta is the one the folds do not corroborate: two of four is a tie, not a
+# majority, and it also carries the weakest test-side edge of the four (+1.16 SE) and by
+# far the widest PR-AUC spread across regimes -- 0.26 give or take 0.21 is a number that
+# should never be quoted on its own. It ships because the stated criterion is the
+# marginal-return curve and it has a floor, but of the four it is the one to drop first
+# if the evidence has to be narrowed.
+#
+# international_emerging is the opposite case and the strongest result in the project:
+# it beat its null in every fold, and cross-validation independently selected 1.61% --
+# the same threshold the marginal-return curve arrived at. The two methods had disagreed
+# wildly everywhere before the look-ahead was removed; here they now agree exactly.
+#
+# They still disagree elsewhere, and the curve still decides. Pooled folds would put
+# market_beta and inflation_safe_haven at 65%, because the pooled sweep asks only whether
+# the average trade above a floor is profitable while the curve asks whether every
+# probability band above it is -- an average can be carried by one good band. The curve
+# also reads the deployed model, where the pooled sweep reads five fold models.
+#
+# Two gated categories look better under cross-validation than under the curve and are
+# worth revisiting: small_cap beat its null in 4 of 5 folds and the pooled sweep found an
+# interior peak at 20% scoring +1.96%, while its curve is inverted; growth_tech beat its
+# null in 4 of 5. Neither changes the gate, because a category whose ranking cannot
+# separate profitable trades from unprofitable ones has nothing to threshold, but both
+# are the obvious places to look next.
 #
 # Re-measure after any retrain. The gate is deliberately not a refusal: Analyze still
 # scores these categories, because investigating a model requires being able to run it.
