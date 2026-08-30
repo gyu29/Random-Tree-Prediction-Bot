@@ -143,7 +143,10 @@ class SwingTradeDetector:
         df_features = TechnicalIndicators.create_all_indicators(
             df, market_context=resolve_market_context(self)
         )
-        df_features = df_features.ffill().bfill().fillna(0).replace([np.inf, -np.inf], 0)
+        # Forward only, as in score_for_backtest. Only the final row is scored here, and
+        # nothing follows it to back-fill from, so this is about not leaving the pattern
+        # lying around for the next caller who scores more than one row.
+        df_features = df_features.ffill().fillna(0).replace([np.inf, -np.inf], 0)
         for feature in self.feature_columns:
             if feature not in df_features.columns:
                 df_features[feature] = _default_for_missing_feature(feature, df_features)
@@ -238,16 +241,27 @@ def score_for_backtest(detector, df, decision_start=50):
     features = TechnicalIndicators.create_all_indicators(
         df, market_context=resolve_market_context(detector)
     )
-    features = features.ffill().bfill().replace([np.inf, -np.inf], 0)
+    # Forward only. A back-fill here took values from later bars and wrote them into the
+    # warm-up rows at the start of the window -- roughly 10% of every backtest's decision
+    # bars were scored on features derived from their own future, which is the same
+    # look-ahead app/trainer.py was cleaned of. Instead the window simply starts once the
+    # features exist: a bar whose 200-day average cannot be computed yet is not a bar this
+    # model can score, and pretending otherwise is what produced the leak.
+    features = features.ffill().replace([np.inf, -np.inf], 0)
     for feature in detector.feature_columns:
         if feature not in features.columns:
             features[feature] = 0
+
+    complete = features[detector.feature_columns].notna().all(axis=1)
+    first_scorable = int(complete.to_numpy().argmax()) if complete.any() else len(features)
+    decision_start = max(decision_start, first_scorable)
 
     decision_end = len(features) - lookforward_periods
     min_rows_needed = decision_start + lookforward_periods + 1
     if decision_end <= decision_start:
         raise ValueError(
-            f"Only {len(features)} usable rows; need at least {min_rows_needed} to allow a full "
+            f"Only {len(features)} usable rows, of which the first {first_scorable} have "
+            f"incomplete features; need at least {min_rows_needed} to allow a full "
             f"{lookforward_periods}-bar hold. Pick a longer window."
         )
 

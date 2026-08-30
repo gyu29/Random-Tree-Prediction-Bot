@@ -201,3 +201,55 @@ def test_indicators_never_raise_on_a_short_frame(rows):
     for context in (None, _context(dates=frame.index)):
         result = TechnicalIndicators.create_all_indicators(frame, market_context=context)
         assert len(result) == rows
+
+
+# -- the backtest window must not be seeded from the future ---------------------------
+
+
+def test_backtest_window_starts_only_once_features_exist():
+    """score_for_backtest used to ffill *and* bfill, which wrote later bars' values into
+    the warm-up rows at the start of the window -- about 10% of every backtest's decision
+    bars were scored on features derived from their own future. The window must instead
+    begin where the features do."""
+    from app.detector import score_for_backtest
+
+    rows = 400
+    rng = np.random.default_rng(7)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, rows)))
+    frame = pd.DataFrame(
+        {"open": close, "high": close * 1.01, "low": close * 0.99, "close": close,
+         "adj_close": close, "volume": rng.integers(1_000_000, 2_000_000, rows)},
+        index=pd.bdate_range("2018-01-01", periods=rows, tz="UTC"),
+    )
+
+    class _Detector:
+        is_ready = True
+        category = "widgets"
+        lookforward_periods = 10
+        decision_threshold = 0.5
+        uses_market_context = False
+        market_context = None
+        # A 200-period feature: unavailable for the first 199 rows by construction.
+        feature_columns = ["price_sma_200_ratio", "rsi_14"]
+
+        class scaler:
+            @staticmethod
+            def transform(X):
+                assert not np.isnan(np.asarray(X, dtype=float)).any(), (
+                    "a bar with missing features reached the model"
+                )
+                return np.asarray(X, dtype=float)
+
+        class model:
+            @staticmethod
+            def predict_proba(X):
+                return np.column_stack([np.ones(len(X)) * 0.9, np.ones(len(X)) * 0.1])
+
+    scoring = score_for_backtest(_Detector(), frame)
+    assert scoring.decision_start >= 199, (
+        "window opened on bars whose 200-period feature could not yet be computed"
+    )
+    scored = scoring.features[_Detector.feature_columns].iloc[
+        scoring.decision_start:scoring.decision_end
+    ]
+    assert scored.notna().all().all()
