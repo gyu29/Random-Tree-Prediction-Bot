@@ -63,7 +63,19 @@ INTERNAL_VALIDATION_FRACTION = 0.15
 # (app/ensemble.py). It sits between the fitting slice and the reporting slice, purged
 # from both, so calibration never sees data it was fitted on and the reported metrics
 # never see data the calibration was fitted on.
-INTERNAL_CALIBRATION_FRACTION = 0.15
+#
+# 20%, not 15%. The binding constraint is the category with the fewest positives in this
+# window, not the average one: at 15% credit_conditions had 78, below
+# app.ensemble.MIN_POSITIVES_FOR_ISOTONIC, so it fell back to a two-parameter sigmoid
+# that cannot represent a distortion of any other shape. 20% is the smallest fraction at
+# which every category that calibrates at all reaches the non-parametric fit -- 172 for
+# credit_conditions, and more for the rest.
+#
+# It costs the fit slice little: credit_conditions goes from 2474 positive training
+# examples to 2388, about 3.5%. Enlarging this window extends it backwards in time, into
+# the earlier period where that category's swings actually cluster, which is why it gains
+# more than the proportional share.
+INTERNAL_CALIBRATION_FRACTION = 0.20
 
 # Raw OHLCV, bookkeeping columns, and the label columns themselves -- plus every
 # absolute price/volume level (app/indicators.py's PRICE_LEVEL_COLUMNS, which owns

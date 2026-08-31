@@ -208,16 +208,16 @@ CALIBRATED_DECISION_THRESHOLDS = {
     # Computed, not swept: the candidate floor whose above/below separation survives a
     # permutation-corrected significance test (scripts/expected_value_thresholds.py).
     # Calibrated probabilities, so several are small -- do not round to two decimals,
-    # since 0.0009 becomes 0.00 and turns the app into an unconditional trader.
-    "inflation_safe_haven": 0.000933,
-    "growth_tech": 0.0020,
-    "international_emerging": 0.0161,
-    "energy_commodity": 0.0429,
-    "market_beta": 0.4514,
+    # since 0.0011 becomes 0.00 and turns the app into an unconditional trader.
+    "growth_tech": 0.004055,
+    "inflation_safe_haven": 0.006068,
+    "credit_conditions": 0.012977,
+    "international_emerging": 0.015140,
+    "market_beta": 0.371525,
     # No floor survives; these three are gated by CATEGORIES_FAILING_VALIDATION, so the
     # values are inert and only keep the Backtest page reproducible.
     "small_cap": 0.0011,
-    "credit_conditions": 0.0075,
+    "energy_commodity": 0.0429,
     "rates_recession": 0.3238,
 }
 
@@ -237,28 +237,35 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # the real thing: with one candidate the bar lands at 1.69 against the textbook 1.64, and
 # with fifteen at 2.47 against Bonferroni's 2.71.
 #
-# Measured 2026-08-30. Separation is above-floor minus below-floor return in standard
-# errors, on validation, with that category's permutation bar in brackets:
+# Measured 2026-08-30, after enlarging the calibration slice from 15% to 20% of training
+# data so every category reaches isotonic calibration (see
+# app.trainer.INTERNAL_CALIBRATION_FRACTION). Separation is above-floor minus below-floor
+# return in standard errors, on validation, with that category's permutation bar in
+# brackets:
 #
-#   ship  market_beta             3.57 [2.34]  floor 45.14%   test +0.87%/trade,  308 trades
-#   ship  growth_tech             2.73 [2.22]  floor 0.20%    test +1.23%/trade, 3018 trades
-#   ship  energy_commodity        2.50 [2.33]  floor 4.29%    test +1.21%/trade,  638 trades
-#   ship  international_emerging  2.35 [2.19]  floor 1.61%    test +0.81%/trade, 2303 trades
-#   ship  inflation_safe_haven    2.15 [2.06]  floor 0.09%    test +0.37%/trade, 2104 trades
+#   ship  market_beta             2.93 [2.39]  floor 37.15%   test +1.03%/trade,  286 trades
+#   ship  growth_tech             2.86 [2.32]  floor 0.41%    test +1.24%/trade, 2984 trades
+#   ship  inflation_safe_haven    2.61 [2.05]  floor 0.61%    test +0.42%/trade, 1676 trades
+#   ship  credit_conditions       2.34 [2.19]  floor 1.30%    test +0.38%/trade, 1159 trades
+#   ship  international_emerging  2.26 [2.15]  floor 1.51%    test +0.75%/trade, 2400 trades
 #
-#   GATE  credit_conditions  2.07 [2.31] -- the closest of the three, and the one to
-#         revisit first. Its calibration rests on 78 positives, the thinnest of any
-#         category that calibrates at all, so more positives is the obvious lever.
-#   GATE  rates_recession    1.30 [2.06]
-#   GATE  small_cap  no floor at any level: its top band inverts, marginal return falling
-#         as predicted probability rises.
+#   GATE  energy_commodity  2.05 [2.34]
+#   GATE  rates_recession   1.46 [2.18]
+#   GATE  small_cap  no floor at any level: its top band inverts.
 #
-# inflation_safe_haven's floor moved from 18.64% to 0.09% under this rule, and the change
-# is a real one rather than noise: the search now picks the candidate whose separation is
-# most reliable rather than the one the curve's shape suggested. It takes far more trades
-# at a lower return each -- +0.37% over 2104 against +0.98% over 425 -- which is the
-# criterion working as intended, since a large per-trade figure over few trades is exactly
-# what this system has repeatedly been fooled by.
+# credit_conditions was gated at 2.07 before this and now clears at 2.34. Its calibration
+# had been resting on 78 positives, thin enough to force a two-parameter sigmoid; with 172
+# it fits isotonically and its probabilities order trades well enough to find a floor.
+#
+# energy_commodity moved the other way over the same retrain, 2.50 to 2.05, and is now
+# gated. Nothing was done to it -- enlarging the calibration slice changed every model,
+# and its separation happened to fall.
+#
+# Which five ship is not stable, and that is the most important thing on this list. Every
+# category sits within about half a standard error of its bar, so a retrain that perturbs
+# nothing in particular reshuffles the membership. Read the set as "these five cleared the
+# bar on this measurement", not as a durable ranking; a category just under it is not
+# meaningfully worse than one just over.
 #
 # small_cap is the one failing on shape rather than significance. On validation its curve
 # is close to textbook, rising to +5.66% per trade on an 81.7% win rate in the 19-53%
@@ -274,7 +281,7 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # What stops is presenting the output as actionable -- no alerts, no place in the
 # screener ranking, and a warning on every payload (app/detector.py, app/trading_system.py).
 CATEGORIES_FAILING_VALIDATION = {
-    "credit_conditions": (
+    "energy_commodity": (
         "This model's advantage over ignoring it is not established at the confidence "
         "this system requires. Not a trading signal."
     ),
