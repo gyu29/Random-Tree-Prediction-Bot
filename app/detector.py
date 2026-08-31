@@ -322,15 +322,27 @@ def simulate_trades(detector, scoring, decision_threshold=None):
                     "entry_date": position["entry_date"], "exit_date": date,
                     "entry_price": position["entry_price"], "exit_price": price,
                     "days_held": days_held, "profit_pct": profit,
+                    "entry_risk": position["entry_risk"],
+                    # Return per unit of risk taken. A 1% gain on an instrument that moves
+                    # 0.4% a day is not the same result as a 1% gain on one that moves 3%,
+                    # and averaging the two as raw percentages buries the first in the
+                    # second's noise. 0.0 when the entry bar had no usable range.
+                    "profit_risk_units": (profit / position["entry_risk"]) if position["entry_risk"] else 0.0,
                     "entry_probability": position["entry_probability"], "exit_reason": reason,
                 })
                 realized_equity *= (1 + profit)
                 position = None
         elif in_window and probability >= decision_threshold:
-            stop, take = detector.calculate_stop_take_profit(price, float(row.get("atr_14", 0)))
+            entry_atr = float(row.get("atr_14", 0))
+            stop, take = detector.calculate_stop_take_profit(price, entry_atr)
             position = {
                 "entry_date": date, "entry_index": index, "entry_price": price,
                 "entry_probability": probability, "stop_loss": stop, "take_profit": take,
+                # Typical daily range at entry, as a fraction of price. Dividing a trade's
+                # return by this expresses it in units of the risk taken to get it, which
+                # is the only way returns from a credit fund and an energy fund can be
+                # averaged together and mean anything.
+                "entry_risk": (entry_atr / price) if price and entry_atr > 0 else 0.0,
             }
 
         if position is not None:

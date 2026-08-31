@@ -77,39 +77,52 @@ SEPARATION_ALPHA = 0.05
 PERMUTATIONS = 2000
 PERMUTATION_SEED = 20260830  # fixed so a threshold is reproducible from the same data
 
+# Trades are not independent observations and the tests must stop pretending they are.
+# Several fire on the same day across correlated symbols -- measured within-date
+# correlation runs 0.09 to 0.46 -- and each is held for up to lookforward_periods bars, so
+# it overlaps the ones entered after it. A two-sample t over individual trades understated
+# every standard error in this project by 6% to 29% from same-date clustering alone,
+# before counting the overlap.
+#
+# So the resampling unit is a block of consecutive entry dates, long enough to span a
+# holding period. Both the standard error and the critical value are computed by
+# resampling those blocks, which carries whatever correlation the trades actually have
+# instead of assuming none.
+BLOCK_LENGTH_DAYS = 10
+BOOTSTRAP_REPLICATES = 2000
 
-def _separation_t(above, below):
-    """Two-sample t for above-floor minus below-floor return. 0.0 when undefined."""
-    if len(above) < 2 or len(below) < 2:
-        return 0.0
-    standard_error = np.sqrt(above.var(ddof=1) / len(above) + below.var(ddof=1) / len(below))
-    return float((above.mean() - below.mean()) / standard_error) if standard_error else 0.0
 
+def permutation_critical_t(values, probabilities, candidates, standard_errors, blocks,
+                           minimum_side, permutations=PERMUTATIONS, alpha=SEPARATION_ALPHA,
+                           seed=PERMUTATION_SEED):
+    """How large the best-of-N studentized separation looks when there is nothing to find.
 
-def permutation_critical_t(probabilities, profits, candidates, minimum_side,
-                           permutations=PERMUTATIONS, alpha=SEPARATION_ALPHA, seed=PERMUTATION_SEED):
-    """How large the best-of-N separation looks when there is nothing to find.
+    Whole blocks of returns are reassigned to a different stretch of history, so the link
+    a floor would exploit is broken while the clustering and overlap inside each block
+    survive. Permuting individual trades would destroy that structure and produce a null
+    far too tight -- a bar too low, and categories shipping on it.
 
-    Shuffles profits against probabilities, so the null is exactly "predicted probability
-    says nothing about realized return" while both marginal distributions and the
-    candidate floors stay as they are. The largest t across candidates is recorded per
-    shuffle; the alpha-level upper quantile of those maxima is the bar.
+    Each candidate's separation is divided by the same bootstrap standard error used for
+    the observed statistic, computed once rather than re-bootstrapped inside every
+    permutation. Standardizing matters because candidates differ in how many trades sit
+    on each side, and an unstandardized maximum would simply pick the thinnest one.
 
-    This replaces Bonferroni because the candidates are nested: the sets above 1% and
-    above 2% overlap almost entirely, their statistics move together, and a correction
-    assuming independence charges for far more searching than actually happened.
+    This also absorbs the multiplicity of searching candidate floors, which are nested
+    subsets of one sample and so far from the independent tests Bonferroni assumes.
     """
     rng = np.random.default_rng(seed)
+    masks = [probabilities >= candidate for candidate in candidates]
     maxima = np.empty(permutations)
     for index in range(permutations):
-        shuffled = rng.permutation(profits)
+        rows = np.concatenate([blocks[i] for i in rng.permutation(len(blocks))])
+        permuted = values[rows]
         best = 0.0
-        for candidate in candidates:
-            mask = probabilities >= candidate
-            above, below = shuffled[mask], shuffled[~mask]
-            if len(above) < minimum_side or len(below) < minimum_side:
+        for mask, standard_error in zip(masks, standard_errors):
+            if not standard_error or mask.sum() < minimum_side or (~mask).sum() < minimum_side:
                 continue
-            best = max(best, _separation_t(above, below))
+            separation = _separation(permuted, mask)
+            if np.isfinite(separation):
+                best = max(best, separation / standard_error)
         maxima[index] = best
     return float(np.quantile(maxima, 1 - alpha))
 
@@ -135,15 +148,61 @@ def win_loss_profile(detector, scored_data, threshold):
 
 
 def null_trades(detector, scored_data):
-    """Every trade the model would open with no threshold at all, as (entry probability,
-    realized profit). The largest sample available, and the one the marginal curve is
-    estimated from."""
-    probabilities, profits = [], []
+    """Every trade the model would open with no threshold at all.
+
+    Returns (probabilities, profits, entry_dates). Entry dates are carried because the
+    significance tests resample by date block rather than by trade -- see
+    BLOCK_LENGTH_DAYS.
+    """
+    probabilities, profits, dates = [], [], []
     for scoring in scored_data.values():
         for trade in simulate_trades(detector, scoring, decision_threshold=0.0)["trades"]:
             probabilities.append(trade["entry_probability"])
             profits.append(trade["profit_pct"])
-    return np.asarray(probabilities, dtype=float), np.asarray(profits, dtype=float)
+            dates.append(pd.Timestamp(trade["entry_date"]).normalize())
+    order = np.argsort(np.asarray(dates))
+    return (np.asarray(probabilities, dtype=float)[order],
+            np.asarray(profits, dtype=float)[order],
+            np.asarray(dates)[order])
+
+
+def date_blocks(dates, block_length=BLOCK_LENGTH_DAYS):
+    """Trade indices grouped into blocks of `block_length` consecutive entry dates.
+
+    Blocks, not individual dates, because a trade held ten bars overlaps every trade
+    entered during those bars. Resampling single dates would break that dependence and
+    understate the variance the same way resampling single trades does.
+    """
+    unique = np.unique(dates)
+    by_date = {day: np.flatnonzero(dates == day) for day in unique}
+    return [
+        np.concatenate([by_date[day] for day in unique[start:start + block_length]])
+        for start in range(0, len(unique), block_length)
+    ]
+
+
+def _separation(values, mask):
+    above, below = values[mask], values[~mask]
+    if len(above) < 2 or len(below) < 2:
+        return np.nan
+    return float(above.mean() - below.mean())
+
+
+def block_bootstrap_se(values, mask, blocks, replicates=BOOTSTRAP_REPLICATES, seed=PERMUTATION_SEED):
+    """Standard error of the separation, from resampling blocks of consecutive entry dates.
+
+    Resamples whole blocks of consecutive entry dates with replacement, so correlated and
+    overlapping trades travel together and the spread of the resampled separations
+    reflects how much this sample could really have differed.
+    """
+    if not blocks or not np.isfinite(_separation(values, mask)):
+        return 0.0
+    rng = np.random.default_rng(seed)
+    draws = np.empty(replicates)
+    for index in range(replicates):
+        rows = np.concatenate([blocks[i] for i in rng.integers(0, len(blocks), len(blocks))])
+        draws[index] = _separation(values[rows], mask[rows])
+    return float(np.nanstd(draws, ddof=1))
 
 
 def marginal_ev_curve(probabilities, profits, bins=PROBABILITY_BINS):
@@ -188,7 +247,8 @@ def solve_threshold(detector, scored_data):
 
     Returns (threshold, note, curve). threshold is None when no such region exists.
     """
-    probabilities, profits = null_trades(detector, scored_data)
+    probabilities, profits, dates = null_trades(detector, scored_data)
+    blocks = date_blocks(dates)
     curve = marginal_ev_curve(probabilities, profits)
     if not curve:
         return None, f"only {len(probabilities)} trades with no threshold -- no curve to estimate", curve
@@ -230,12 +290,15 @@ def solve_threshold(detector, scored_data):
         above, below = profits[probabilities >= candidate], profits[probabilities < candidate]
         if len(above) < MIN_TRADES_FOR_THRESHOLD or len(below) < MIN_TRADES_FOR_THRESHOLD:
             continue
-        t_statistic = _separation_t(above, below)
-        if not t_statistic:
+        mask = probabilities >= candidate
+        standard_error = block_bootstrap_se(profits, mask, blocks)
+        if not standard_error:
             continue
         scored_candidates.append({
             "threshold": candidate, "separation": above.mean() - below.mean(),
-            "t": t_statistic, "above": above, "below": below,
+            "standard_error": standard_error,
+            "t": (above.mean() - below.mean()) / standard_error,
+            "above": above, "below": below,
         })
     if not scored_candidates:
         return None, (f"no candidate floor leaves {MIN_TRADES_FOR_THRESHOLD} trades on both "
@@ -243,7 +306,8 @@ def solve_threshold(detector, scored_data):
 
     best = max(scored_candidates, key=lambda c: c["t"])
     required = permutation_critical_t(
-        probabilities, profits, [c["threshold"] for c in scored_candidates], MIN_TRADES_FOR_THRESHOLD
+        profits, probabilities, [c["threshold"] for c in scored_candidates],
+        [c["standard_error"] for c in scored_candidates], blocks, MIN_TRADES_FOR_THRESHOLD,
     )
     if best["t"] < required:
         return None, (f"the best of {len(scored_candidates)} candidate floors is {best['threshold']:.2%}, "

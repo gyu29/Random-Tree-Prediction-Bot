@@ -204,91 +204,75 @@ CALIBRATED_SWING_THRESHOLDS = {
     # swing. 20% brings it to 4.28%.
     "growth_tech": 0.20,
 }
+# Every category is gated, so none of these decides anything a user acts on. They are the
+# last floors the search produced and are kept so the Backtest page stays reproducible.
 CALIBRATED_DECISION_THRESHOLDS = {
-    # Computed, not swept: the candidate floor whose above/below separation survives a
-    # permutation-corrected significance test (scripts/expected_value_thresholds.py).
-    # Calibrated probabilities, so several are small -- do not round to two decimals,
-    # since 0.0011 becomes 0.00 and turns the app into an unconditional trader.
+    "small_cap": 0.0011,
     "growth_tech": 0.004055,
     "inflation_safe_haven": 0.006068,
     "credit_conditions": 0.012977,
     "international_emerging": 0.015140,
-    "market_beta": 0.371525,
-    # No floor survives; these three are gated by CATEGORIES_FAILING_VALIDATION, so the
-    # values are inert and only keep the Backtest page reproducible.
-    "small_cap": 0.0011,
     "energy_commodity": 0.0429,
     "rates_recession": 0.3238,
+    "market_beta": 0.371525,
 }
 
 # Categories whose model must not be presented as a trading signal.
 #
-# A category ships only if a probability floor exists whose bins all earn non-negative
-# marginal returns AND above which trades demonstrably out-earn those below it
-# (scripts/expected_value_thresholds.py). The floor is chosen by searching the candidate
-# bin edges for the largest separation, so the bar has to pay for that search.
+# All eight, as of 2026-08-30. None of them survives a significance test that treats
+# trades as the correlated observations they are.
 #
-# The correction is a permutation max-t, not Bonferroni. Bonferroni assumes independent
-# tests; these candidates are nested subsets of one sample, so the statistic at adjacent
-# floors is nearly the same number and the correction charges for far more searching than
-# happened. It cost international_emerging its floor by four hundredths of a standard
-# error while five of five cross-validation folds said the model beat its null. Permuting
-# profits against probabilities and taking the 95th percentile of the best-of-N measures
-# the real thing: with one candidate the bar lands at 1.69 against the textbook 1.64, and
-# with fifteen at 2.47 against Bonferroni's 2.71.
+# The test is scripts/expected_value_thresholds.py: with calibrated probabilities, find a
+# probability floor above which trades demonstrably out-earn those below it. What changed
+# is not the models but the standard error. Every earlier version of this file divided by
+# a two-sample standard error computed as though each trade were an independent draw.
+# They are not. Two or three fire on the same day across correlated symbols -- measured
+# within-date correlation runs 0.09 to 0.46 -- and each is held up to lookforward_periods
+# bars, overlapping every trade entered during them. Resampling blocks of consecutive
+# entry dates instead widens the standard errors by 1.6x to 4.4x, and nothing is left:
 #
-# Measured 2026-08-30, after enlarging the calibration slice from 15% to 20% of training
-# data so every category reaches isotonic calibration (see
-# app.trainer.INTERNAL_CALIBRATION_FRACTION). Separation is above-floor minus below-floor
-# return in standard errors, on validation, with that category's permutation bar in
-# brackets:
+#   category                separation   t     bar    (was, under the old test)
+#   growth_tech               +1.70%    1.88  2.29     2.86
+#   international_emerging    +0.65%    1.57  2.06     2.26
+#   inflation_safe_haven      +0.57%    1.44  1.52     2.61
+#   credit_conditions         +0.25%    1.44  1.86     2.34
+#   rates_recession           +0.98%    1.09  3.71     1.46
+#   energy_commodity          +1.05%    0.78  2.31     2.05
+#   market_beta               +1.63%    0.66  3.01     2.93
+#   small_cap                    --      --    --      no floor at any level; top band inverts
 #
-#   ship  market_beta             2.93 [2.39]  floor 37.15%   test +1.03%/trade,  286 trades
-#   ship  growth_tech             2.86 [2.32]  floor 0.41%    test +1.24%/trade, 2984 trades
-#   ship  inflation_safe_haven    2.61 [2.05]  floor 0.61%    test +0.42%/trade, 1676 trades
-#   ship  credit_conditions       2.34 [2.19]  floor 1.30%    test +0.38%/trade, 1159 trades
-#   ship  international_emerging  2.26 [2.15]  floor 1.51%    test +0.75%/trade, 2400 trades
+# The separations themselves barely moved. What moved is how much of each is attributable
+# to having a few correlated bets rather than many independent ones, and market_beta is
+# the clearest case: 286 trades over 116 entry dates, within-date correlation 0.46, so
+# what looked like 2.93 standard errors of evidence is 0.66.
 #
-#   GATE  energy_commodity  2.05 [2.34]
-#   GATE  rates_recession   1.46 [2.18]
-#   GATE  small_cap  no floor at any level: its top band inverts.
+# This supersedes every earlier reading in this file, including several that shipped
+# categories. Those were not different models measured honestly; they were these models
+# measured against a standard error that assumed away the dependence in the data.
 #
-# credit_conditions was gated at 2.07 before this and now clears at 2.34. Its calibration
-# had been resting on 78 positives, thin enough to force a two-parameter sigmoid; with 172
-# it fits isotonically and its probabilities order trades well enough to find a floor.
+# Nothing here says the models have no signal. It says the evidence for it is not
+# separable from noise at the sample sizes available, which is a statement about how much
+# independent data eight overlapping factor categories can yield, not a verdict on the
+# modelling. The lever is more independent observations -- and adding more correlated ETFs
+# is not that, since effective independent series per category already runs 1.2 to 3.7
+# across 208 tickers.
 #
-# energy_commodity moved the other way over the same retrain, 2.50 to 2.05, and is now
-# gated. Nothing was done to it -- enlarging the calibration slice changed every model,
-# and its separation happened to fall.
-#
-# Which five ship is not stable, and that is the most important thing on this list. Every
-# category sits within about half a standard error of its bar, so a retrain that perturbs
-# nothing in particular reshuffles the membership. Read the set as "these five cleared the
-# bar on this measurement", not as a durable ranking; a category just under it is not
-# meaningfully worse than one just over.
-#
-# small_cap is the one failing on shape rather than significance. On validation its curve
-# is close to textbook, rising to +5.66% per trade on an 81.7% win rate in the 19-53%
-# band, and then the top band collapses to -2.50%. A band rather than a floor was tried,
-# since the shape invites it: on validation it beats taking every trade, +1.12% against
-# +0.99%; on test it returns +0.47% against +0.48%, exactly nothing. Real in the window
-# it was measured in and absent in the next, so no band is applied. Its labels and
-# calibration are fine -- an 8% swing_threshold gives a 4.51% positive rate inside the
-# target band, calibrating on 294 positives -- so there is no configuration fix here.
-#
-# Re-measure after any retrain. The gate is deliberately not a refusal: Analyze still
-# scores these categories, because investigating a model requires being able to run it.
-# What stops is presenting the output as actionable -- no alerts, no place in the
-# screener ranking, and a warning on every payload (app/detector.py, app/trading_system.py).
+# The gate is deliberately not a refusal: Analyze still scores every category, because
+# investigating a model requires being able to run it. What stops is presenting the output
+# as actionable -- no alerts, no screener ranking, and a warning on every payload.
+_NO_ESTABLISHED_EDGE = (
+    "No advantage over ignoring this model is measurable at the sample sizes available "
+    "once correlated and overlapping trades stop being counted as independent evidence. "
+    "Not a trading signal."
+)
 CATEGORIES_FAILING_VALIDATION = {
-    "energy_commodity": (
-        "This model's advantage over ignoring it is not established at the confidence "
-        "this system requires. Not a trading signal."
-    ),
-    "rates_recession": (
-        "This model's advantage over ignoring it is not established at the confidence "
-        "this system requires. Not a trading signal."
-    ),
+    "credit_conditions": _NO_ESTABLISHED_EDGE,
+    "energy_commodity": _NO_ESTABLISHED_EDGE,
+    "growth_tech": _NO_ESTABLISHED_EDGE,
+    "inflation_safe_haven": _NO_ESTABLISHED_EDGE,
+    "international_emerging": _NO_ESTABLISHED_EDGE,
+    "market_beta": _NO_ESTABLISHED_EDGE,
+    "rates_recession": _NO_ESTABLISHED_EDGE,
     "small_cap": (
         "This model's ranking is inverted at the top of its range -- the trades it rates "
         "highest are the ones that lose money. Its output is not a trading signal."

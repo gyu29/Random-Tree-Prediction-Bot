@@ -19,6 +19,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin
 
@@ -174,7 +175,12 @@ def test_feature_importances_still_come_from_the_base_estimators():
 
 
 def _trades(bands):
-    """bands: [(count, mean_profit)] from lowest probability band upward."""
+    """bands: [(count, mean_profit)] from lowest probability band upward.
+
+    Entry dates are one per trade and strictly increasing, so every block of consecutive
+    dates holds independent trades -- the significance machinery then has no clustering
+    to find, which is what these fixtures intend.
+    """
     probabilities, profits = [], []
     rng = np.random.default_rng(0)
     base = 0.0
@@ -183,7 +189,10 @@ def _trades(bands):
         draws = rng.normal(mean, 0.01, count)
         profits.extend(draws - draws.mean() + mean)
         base += 0.05
-    return np.asarray(probabilities), np.asarray(profits)
+    probabilities, profits = np.asarray(probabilities), np.asarray(profits)
+    dates = pd.bdate_range("2015-01-01", periods=len(profits), tz="UTC").to_numpy()
+    order = np.argsort(probabilities)
+    return probabilities[order], profits[order], dates
 
 
 class _NoScoring:
@@ -192,16 +201,16 @@ class _NoScoring:
 
 
 def _solve(bands, monkeypatch):
-    probabilities, profits = _trades(bands)
+    probabilities, profits, dates = _trades(bands)
     monkeypatch.setattr(
         "scripts.expected_value_thresholds.null_trades",
-        lambda detector, scored: (probabilities, profits),
+        lambda detector, scored: (probabilities, profits, dates),
     )
     return solve_threshold(_NoScoring(), {})
 
 
 def test_curve_bins_by_quantile_so_every_bin_has_trades():
-    probabilities, profits = _trades([(200, 0.01), (200, 0.02), (200, 0.03)])
+    probabilities, profits, _ = _trades([(200, 0.01), (200, 0.02), (200, 0.03)])
     curve = marginal_ev_curve(probabilities, profits, bins=6)
     assert len(curve) >= 4
     assert all(band["num_trades"] > 0 for band in curve)
@@ -249,7 +258,7 @@ def test_no_threshold_when_the_whole_curve_loses(monkeypatch):
 def test_too_few_trades_overall_yields_no_threshold(monkeypatch):
     """Quantile bins are equal-count, so a thin sample makes every band thin at once.
     A threshold resting on a dozen trades per band is noise dressed as a decision."""
-    probabilities, profits = _trades([(20, -0.02), (20, 0.05), (20, 0.08)])
+    probabilities, profits, _ = _trades([(20, -0.02), (20, 0.05), (20, 0.08)])
     curve = marginal_ev_curve(probabilities, profits, bins=8)
     assert all(band["num_trades"] < MIN_TRADES_PER_BIN for band in curve)
 
@@ -261,37 +270,67 @@ def test_too_few_trades_overall_yields_no_threshold(monkeypatch):
 # -- the multiplicity correction ------------------------------------------------------
 
 
-def test_permutation_bar_collapses_to_the_single_test_value_with_one_candidate():
-    """With nothing searched over there is nothing to pay for, so the bar must land on the
-    ordinary one-sided 5% critical value. If it does not, the correction is miscalibrated
-    in a way that would silently gate or ship categories on the wrong evidence."""
-    from scripts.expected_value_thresholds import permutation_critical_t
+def test_permutation_bar_collapses_toward_a_single_test_with_one_candidate():
+    """With nothing searched over there is nothing to pay for, so the bar should sit near
+    an ordinary one-sided critical value rather than far above it."""
+    from scripts.expected_value_thresholds import (
+        block_bootstrap_se, date_blocks, permutation_critical_t,
+    )
 
     rng = np.random.default_rng(1)
-    profits = rng.normal(0.005, 0.05, 3000)
-    probabilities = rng.uniform(0, 1, 3000)
-    bar = permutation_critical_t(probabilities, profits, [np.quantile(probabilities, 0.5)],
-                                 40, permutations=1500)
-    assert 1.5 < bar < 1.9, f"one candidate should cost about 1.64, got {bar:.2f}"
+    profits = rng.normal(0.005, 0.05, 2000)
+    probabilities = rng.uniform(0, 1, 2000)
+    dates = pd.bdate_range("2010-01-01", periods=2000, tz="UTC").to_numpy()
+    blocks = date_blocks(dates)
+    candidate = float(np.quantile(probabilities, 0.5))
+    errors = [block_bootstrap_se(profits, probabilities >= candidate, blocks, replicates=400)]
+    bar = permutation_critical_t(profits, probabilities, [candidate], errors, blocks, 40,
+                                 permutations=400)
+    assert 1.2 < bar < 2.3, f"one candidate should cost roughly a single test, got {bar:.2f}"
 
 
-def test_permutation_bar_rises_with_candidates_but_stays_under_bonferroni():
-    """The whole reason for permuting: nested candidates are strongly correlated, so the
-    best-of-N is not as extreme as independence would predict. The bar must still rise
-    with the number searched -- otherwise the search is free, which it is not."""
-    from scipy.stats import norm
-
-    from scripts.expected_value_thresholds import permutation_critical_t
+def test_permutation_bar_rises_as_more_candidates_are_searched():
+    """The search is not free: looking at more floors must raise the bar."""
+    from scripts.expected_value_thresholds import (
+        block_bootstrap_se, date_blocks, permutation_critical_t,
+    )
 
     rng = np.random.default_rng(1)
-    profits = rng.normal(0.005, 0.05, 3000)
-    probabilities = rng.uniform(0, 1, 3000)
+    profits = rng.normal(0.005, 0.05, 2000)
+    probabilities = rng.uniform(0, 1, 2000)
+    dates = pd.bdate_range("2010-01-01", periods=2000, tz="UTC").to_numpy()
+    blocks = date_blocks(dates)
     bars = []
-    for count in (2, 7, 15):
-        candidates = list(np.quantile(probabilities, np.linspace(0.15, 0.85, count)))
-        bar = permutation_critical_t(probabilities, profits, candidates, 40, permutations=1500)
-        bars.append(bar)
-        assert bar < norm.ppf(1 - 0.05 / count) + 0.05, (
-            f"{count} nested candidates should cost less than Bonferroni, got {bar:.2f}"
-        )
-    assert bars == sorted(bars), f"bar must not fall as more candidates are searched: {bars}"
+    for count in (1, 8):
+        candidates = list(np.quantile(probabilities, np.linspace(0.2, 0.8, count)))
+        errors = [block_bootstrap_se(profits, probabilities >= c, blocks, replicates=400)
+                  for c in candidates]
+        bars.append(permutation_critical_t(profits, probabilities, candidates, errors, blocks,
+                                           40, permutations=400))
+    assert bars[1] > bars[0], f"searching 8 floors must cost more than 1: {bars}"
+
+
+def test_block_bootstrap_widens_the_error_when_trades_are_clustered():
+    """The reason for resampling blocks at all. Trades that arrive together and move
+    together carry less information than their count suggests, and the standard error has
+    to say so -- otherwise correlated bets are counted as independent evidence, which is
+    what made seven of eight categories look like they had an edge."""
+    from scripts.expected_value_thresholds import block_bootstrap_se, date_blocks
+
+    rng = np.random.default_rng(3)
+    days, per_day = 200, 5
+    shared = rng.normal(0, 0.04, days)          # a common shock each day
+    independent = rng.normal(0, 0.04, (days, per_day))
+    clustered = (shared[:, None] + independent).ravel()
+    scattered = rng.normal(0, 0.04, days * per_day)
+
+    dates = np.repeat(pd.bdate_range("2010-01-01", periods=days, tz="UTC").to_numpy(), per_day)
+    blocks = date_blocks(dates)
+    mask = np.tile([True] * per_day, days).astype(bool)
+    mask[: days * per_day // 2] = False
+
+    clustered_se = block_bootstrap_se(clustered, mask, blocks, replicates=600)
+    scattered_se = block_bootstrap_se(scattered, mask, blocks, replicates=600)
+    assert clustered_se > scattered_se, (
+        f"clustered returns must yield the larger error: {clustered_se:.5f} vs {scattered_se:.5f}"
+    )
