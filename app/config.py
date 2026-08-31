@@ -66,12 +66,22 @@ DEFAULT_ENV_CONTENT = (
 # SPY is absent on purpose: app/market_context.py uses it as the benchmark every
 # relative feature is measured against, so a model scoring SPY would be handed
 # excess_return columns that are identically zero and a beta of exactly one.
+#
+# 36 funds trading under $5M a day were removed in 2026-08-30. Not on cost grounds -- a
+# per-trade cost is the same for every trade and cancels out of the separation statistic,
+# which is a difference of two means -- but because a position in a fund turning over
+# $41,000 a day (PSCU) cannot be taken at size, so returns measured on it are not
+# returns anybody could have had. They cost up to 44% of a category's trade count and
+# almost none of its independent information: effective independent series barely moved
+# for any category (small_cap 1.17 to 1.05, energy_commodity 2.13 to 1.92, the rest
+# unchanged), which says they were duplicating the liquid names rather than adding to
+# them. Cheap in the terms that decide significance, and it makes every figure realizable.
 FACTOR_CATEGORIES = {
     # Broad US equity, spread across sectors and factor styles instead of seven
     # wrappers around the same index.
     "market_beta": [
         "^GSPC", "^DJI", "DIA", "RSP", "XLF", "XLV", "XLI", "XLY", "XLP", "XLU",
-        "XLB", "XLRE", "XLC", "MTUM", "QUAL", "USMV", "VLUE", "SIZE", "SPLV", "OEF",
+        "XLB", "XLRE", "XLC", "MTUM", "QUAL", "USMV", "VLUE", "SPLV", "OEF",
         "IWB", "IWV", "VONE", "SCHX", "SPYD",
     ],
     # Survivorship-biased by construction -- see the note above. The single names are
@@ -80,28 +90,26 @@ FACTOR_CATEGORIES = {
     "growth_tech": [
         "QQQ", "XLK", "VGT", "ARKK", "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META",
         "AVGO", "AMD", "CRM", "ADBE", "INTC", "CSCO", "ORCL", "IBM", "TXN", "QCOM",
-        "MU", "AMAT", "SOXX", "SMH", "IGV", "XSW", "SKYY", "HACK",
+        "MU", "AMAT", "SOXX", "SMH", "IGV", "SKYY", "HACK",
     ],
     # Small cap by sector (the PSC* family) and by style, not seven Russell 2000 clones.
     "small_cap": [
         "IWM", "IJR", "VB", "^RUT", "VTWO", "SCHA", "IWO", "IWN", "IJS", "IJT",
-        "VBR", "VBK", "SLYV", "SLYG", "PSCT", "PSCH", "PSCF", "PSCD", "PSCE", "PSCI",
-        "PSCM", "PSCC", "PSCU", "DES", "DGRS", "FNDA",
+        "VBR", "VBK", "SLYV", "SLYG", "FNDA",
     ],
     # Single-country funds: genuinely different economies rather than seven overlapping
     # aggregates of the same ones.
     "international_emerging": [
         "EEM", "VWO", "EFA", "VEU", "FXI", "IEMG", "ACWX", "EWJ", "EWZ", "EWY",
         "EWT", "EWG", "EWU", "EWC", "EWA", "EWH", "EWS", "EWW", "EZA", "INDA",
-        "EIDO", "THD", "TUR", "EPOL", "EWL", "EWN", "EWD", "EWQ", "EWI", "EWP",
+        "EIDO", "TUR", "EWL", "EWD", "EWQ", "EWI", "EWP",
     ],
     # Credit quality tiers and maturities, which do not move together the way seven
     # high-yield funds do.
     "credit_conditions": [
         "HYG", "JNK", "LQD", "BKLN", "EMB", "SJNK", "ANGL", "VCIT", "VCSH", "VCLT",
         "IGSB", "IGIB", "SPIB", "SPLB", "USHY", "HYLB", "SHYG", "FALN", "PFF", "PGX",
-        "CWB", "EMHY", "PCY", "IHY",
-    ],
+        "CWB", "PCY", ],
     # BIL/GOVT (tradable T-bill/Treasury ETFs) rather than ^IRX/^TNX: those are yield
     # quotes, not prices. ^IRX in particular went briefly negative in 2020 (a real,
     # documented flight-to-safety event) -- computing a percentage return against an
@@ -135,15 +143,14 @@ FACTOR_CATEGORIES = {
     # Separate metals and separate currencies now, rather than three gold funds.
     "inflation_safe_haven": [
         "GLD", "SLV", "TIP", "IAU", "UUP", "FXY", "SCHP", "SGOL", "PPLT", "PALL",
-        "GLTR", "DBP", "FXE", "FXB", "FXF", "FXA", "FXC", "UDN", "LTPZ", "SPIP",
-        "IVOL", "CGW",
-    ],
+        "FXE", "SPIP",
+        "IVOL", ],
     # Energy sub-industries plus the metals and agricultural complexes, rather than
     # four ways to own crude.
     "energy_commodity": [
-        "USO", "USOI", "XLE", "DBC", "XOP", "UNG", "CVX", "XES", "OIH", "IEO",
-        "IEZ", "PXE", "PXJ", "AMLP", "MLPX", "FCG", "BNO", "UGA", "DBO", "DBA",
-        "CORN", "WEAT", "SOYB", "DBB", "COPX", "PICK", "GDX", "GDXJ", "SIL",
+        "USO", "XLE", "DBC", "XOP", "UNG", "CVX", "XES", "OIH", "IEO",
+        "AMLP", "MLPX", "FCG", "BNO", "DBO", "DBA",
+        "COPX", "PICK", "GDX", "GDXJ", "SIL",
     ],
 }
 
@@ -231,20 +238,33 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # bars, overlapping every trade entered during them. Resampling blocks of consecutive
 # entry dates instead widens the standard errors by 1.6x to 4.4x, and nothing is left:
 #
-#   category                separation   t     bar    (was, under the old test)
-#   growth_tech               +1.70%    1.88  2.29     2.86
-#   international_emerging    +0.65%    1.57  2.06     2.26
-#   inflation_safe_haven      +0.57%    1.44  1.52     2.61
-#   credit_conditions         +0.25%    1.44  1.86     2.34
-#   rates_recession           +0.98%    1.09  3.71     1.46
-#   energy_commodity          +1.05%    0.78  2.31     2.05
-#   market_beta               +1.63%    0.66  3.01     2.93
-#   small_cap                    --      --    --      no floor at any level; top band inverts
+#   category                separation    t     bar
+#   growth_tech               +1.70%     2.09   2.17
+#   inflation_safe_haven      +0.71%     1.49   2.00
+#   rates_recession           +0.98%     1.09   3.71
+#   international_emerging    +0.46%     1.00   2.33
+#   energy_commodity          +1.17%     0.75   2.63
+#   market_beta               +1.69%     0.72   3.08
+#   credit_conditions            --       --     --    top band inverts
+#   small_cap                    --       --     --    top band inverts
 #
 # The separations themselves barely moved. What moved is how much of each is attributable
 # to having a few correlated bets rather than many independent ones, and market_beta is
 # the clearest case: 286 trades over 116 entry dates, within-date correlation 0.46, so
 # what looked like 2.93 standard errors of evidence is 0.66.
+#
+# Transaction costs were checked and are not the constraint. A per-trade cost is identical
+# for every trade and so cancels out of the separation, which is a difference of two means
+# -- verified numerically, +1.7114% before and after charging 0.50% a trade. What costs
+# decide is whether the trades are worth taking, and the break-even cost per category runs
+# 0.38% to 1.54% against realistic round trips of roughly 0.05% to 0.50%. The edges, such
+# as they are, clear costs comfortably; they do not clear noise.
+#
+# A Corwin-Schultz spread estimator was built for this and discarded. It ranked NVDA, at
+# $12.7bn of daily turnover, as the most expensive name in the universe and BIL as the
+# cheapest, correlating +0.28 with dollar volume where it should correlate strongly
+# negative. It was measuring volatility rather than spread, which is the one thing that
+# estimator exists to avoid, so its numbers are not in this file.
 #
 # This supersedes every earlier reading in this file, including several that shipped
 # categories. Those were not different models measured honestly; they were these models
