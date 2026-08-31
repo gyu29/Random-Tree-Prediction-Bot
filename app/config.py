@@ -234,25 +234,31 @@ CALIBRATED_DECISION_THRESHOLDS = {
 #   ship  market_beta             floor 5.15%   +1.03 SE    248 trades
 #   ship  growth_tech             floor 1.24%   +0.99 SE   2623 trades
 #
-#   GATE  small_cap  inverted: marginal return falls as predicted probability rises, so
-#         the trades a floor would keep are the losing ones. The only category with no
-#         floor at all, and +0.37 SE against its null -- indistinguishable from ignoring it.
+#   GATE  small_cap  its ranking does not transfer. On validation the marginal curve is
+#         close to textbook -- rising through +0.45%, +0.72%, +1.64%, +1.97% and peaking
+#         at +5.66% per trade on an 81.7% win rate in the 19-53% band -- and then the top
+#         band (above 53%) collapses to -2.50%. Because a floor has to be open-ended
+#         upward, that collapsing tail alone denies it one.
+#
+#         A band rather than a floor was tried, since the shape invites it: trade between
+#         0.2% and 30% and skip the extreme tail. On validation it beats taking every
+#         trade, +1.12% against +0.99%. On test it is +0.47% against +0.48% -- exactly
+#         nothing. The structure is real in the window it was measured in and absent in
+#         the next one, which is what a fitted artifact looks like, so no band is applied.
 #
 #         Not a labelling or calibration problem, unlike credit_conditions': at its 8%
 #         swing_threshold it produces a 4.51% positive rate, inside the target band, and
-#         calibrates cleanly on 294 positives. Its ranking is simply anti-predictive, and
-#         no choice of threshold or label definition addresses that.
+#         calibrates cleanly on 294 positives. Overall it is +0.37 SE against its null --
+#         indistinguishable from ignoring it.
 #
 #         Its 4-of-5 cross-validation folds beating the null looked like a contradiction
 #         and is not: those were measured at an inherited threshold of 0.0011, which
 #         admits essentially every trade. That figure was measuring the entry/exit
 #         machinery with the model switched off, not the model.
 #
-# growth_tech and market_beta ship on the letter of the rule and little else. A floor
-# exists for both, but their edge over doing nothing is within one standard error, which
-# is to say unmeasured rather than established. rates_recession only has a floor at all
-# because its ticker list was pruned; growth_tech only has one because the last-bar
-# defect was fixed. Neither should be read as a strong result.
+#         Kept rather than deleted. The category is a real factor and the config records
+#         exactly what its model has to clear to come back; deleting it would also leave
+#         the gate with nothing exercising it in normal use.
 #
 # Regime dependence, measured on validation/ and test/ separately by bucketing each
 # trade on the VIX at entry. Three categories lose their edge when volatility is high,
