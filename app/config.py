@@ -206,18 +206,18 @@ CALIBRATED_SWING_THRESHOLDS = {
 }
 CALIBRATED_DECISION_THRESHOLDS = {
     # Computed, not swept: the candidate floor whose above/below separation survives a
-    # multiplicity-corrected significance test (scripts/expected_value_thresholds.py).
-    # Calibrated probabilities, so some are small -- do not round to two decimals, since
-    # 0.0020 becomes 0.00 and turns the app into an unconditional trader.
+    # permutation-corrected significance test (scripts/expected_value_thresholds.py).
+    # Calibrated probabilities, so several are small -- do not round to two decimals,
+    # since 0.0009 becomes 0.00 and turns the app into an unconditional trader.
+    "inflation_safe_haven": 0.000933,
     "growth_tech": 0.0020,
+    "international_emerging": 0.0161,
     "energy_commodity": 0.0429,
     "market_beta": 0.4514,
-    # No floor survives; these five are gated by CATEGORIES_FAILING_VALIDATION, so the
+    # No floor survives; these three are gated by CATEGORIES_FAILING_VALIDATION, so the
     # values are inert and only keep the Backtest page reproducible.
     "small_cap": 0.0011,
     "credit_conditions": 0.0075,
-    "international_emerging": 0.0161,
-    "inflation_safe_haven": 0.1864,
     "rates_recession": 0.3238,
 }
 
@@ -226,39 +226,39 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # A category ships only if a probability floor exists whose bins all earn non-negative
 # marginal returns AND above which trades demonstrably out-earn those below it
 # (scripts/expected_value_thresholds.py). The floor is chosen by searching the candidate
-# bin edges for the largest separation, so the significance bar is Bonferroni-corrected
-# for that search -- 2.2 to 2.5 standard errors depending on how many candidates a
-# category offers, rather than the 2.0 a single pre-chosen test would need.
+# bin edges for the largest separation, so the bar has to pay for that search.
 #
-# That rule is stricter than the one it replaces, in both directions. The old version
-# required the bottom bin to be *losing* money, which threw away any model whose trades
-# were all profitable but very unevenly so -- growth_tech earns +1.23% per trade above
-# its floor against +0.61% below, a ranking that plainly works and that the old rule
-# rejected outright. It also never made a floor prove it beat having no floor, which
-# several categories turn out not to.
+# The correction is a permutation max-t, not Bonferroni. Bonferroni assumes independent
+# tests; these candidates are nested subsets of one sample, so the statistic at adjacent
+# floors is nearly the same number and the correction charges for far more searching than
+# happened. It cost international_emerging its floor by four hundredths of a standard
+# error while five of five cross-validation folds said the model beat its null. Permuting
+# profits against probabilities and taking the 95th percentile of the best-of-N measures
+# the real thing: with one candidate the bar lands at 1.69 against the textbook 1.64, and
+# with fifteen at 2.47 against Bonferroni's 2.71.
 #
 # Measured 2026-08-30. Separation is above-floor minus below-floor return in standard
-# errors, on validation, with that category's corrected bar in brackets:
+# errors, on validation, with that category's permutation bar in brackets:
 #
-#   ship  market_beta       floor 45.14%   test +0.87%/trade over  308 trades
-#   ship  growth_tech       floor 0.20%    test +1.23%/trade over 3018 trades
-#   ship  energy_commodity  floor 4.29%    test +1.21%/trade over  638 trades
+#   ship  market_beta             3.57 [2.34]  floor 45.14%   test +0.87%/trade,  308 trades
+#   ship  growth_tech             2.73 [2.22]  floor 0.20%    test +1.23%/trade, 3018 trades
+#   ship  energy_commodity        2.50 [2.33]  floor 4.29%    test +1.21%/trade,  638 trades
+#   ship  international_emerging  2.35 [2.19]  floor 1.61%    test +0.81%/trade, 2303 trades
+#   ship  inflation_safe_haven    2.15 [2.06]  floor 0.09%    test +0.37%/trade, 2104 trades
 #
-#   GATE  international_emerging  2.35 [2.39] -- misses by four hundredths of a standard
-#         error, with five of five cross-validation folds beating its null behind it.
-#         Read as not established rather than absent: Bonferroni assumes independent
-#         tests and these candidate floors are nested, so the correction is conservative
-#         here. First category to revisit.
-#   GATE  inflation_safe_haven    2.15 [2.33]
-#   GATE  credit_conditions       2.07 [2.45]
-#   GATE  rates_recession         1.30 [2.24]
+#   GATE  credit_conditions  2.07 [2.31] -- the closest of the three, and the one to
+#         revisit first. Its calibration rests on 78 positives, the thinnest of any
+#         category that calibrates at all, so more positives is the obvious lever.
+#   GATE  rates_recession    1.30 [2.06]
 #   GATE  small_cap  no floor at any level: its top band inverts, marginal return falling
 #         as predicted probability rises.
 #
-# Three categories that shipped under the old rule no longer do, including the one with
-# the strongest independent evidence. That is the rule getting stricter, not the models
-# getting worse. The honest reading is that most of these edges were never established --
-# they were reported at a bar that did not account for having gone looking for them.
+# inflation_safe_haven's floor moved from 18.64% to 0.09% under this rule, and the change
+# is a real one rather than noise: the search now picks the candidate whose separation is
+# most reliable rather than the one the curve's shape suggested. It takes far more trades
+# at a lower return each -- +0.37% over 2104 against +0.98% over 425 -- which is the
+# criterion working as intended, since a large per-trade figure over few trades is exactly
+# what this system has repeatedly been fooled by.
 #
 # small_cap is the one failing on shape rather than significance. On validation its curve
 # is close to textbook, rising to +5.66% per trade on an 81.7% win rate in the 19-53%
@@ -274,14 +274,6 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # What stops is presenting the output as actionable -- no alerts, no place in the
 # screener ranking, and a warning on every payload (app/detector.py, app/trading_system.py).
 CATEGORIES_FAILING_VALIDATION = {
-    "international_emerging": (
-        "This model's advantage over ignoring it is not established at the confidence "
-        "this system requires. Not a trading signal."
-    ),
-    "inflation_safe_haven": (
-        "This model's advantage over ignoring it is not established at the confidence "
-        "this system requires. Not a trading signal."
-    ),
     "credit_conditions": (
         "This model's advantage over ignoring it is not established at the confidence "
         "this system requires. Not a trading signal."

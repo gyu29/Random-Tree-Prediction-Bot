@@ -256,3 +256,42 @@ def test_too_few_trades_overall_yields_no_threshold(monkeypatch):
     threshold, note, _ = _solve([(20, -0.02), (20, 0.05), (20, 0.08)], monkeypatch)
     assert threshold is None
     assert "not estimable" in note
+
+
+# -- the multiplicity correction ------------------------------------------------------
+
+
+def test_permutation_bar_collapses_to_the_single_test_value_with_one_candidate():
+    """With nothing searched over there is nothing to pay for, so the bar must land on the
+    ordinary one-sided 5% critical value. If it does not, the correction is miscalibrated
+    in a way that would silently gate or ship categories on the wrong evidence."""
+    from scripts.expected_value_thresholds import permutation_critical_t
+
+    rng = np.random.default_rng(1)
+    profits = rng.normal(0.005, 0.05, 3000)
+    probabilities = rng.uniform(0, 1, 3000)
+    bar = permutation_critical_t(probabilities, profits, [np.quantile(probabilities, 0.5)],
+                                 40, permutations=1500)
+    assert 1.5 < bar < 1.9, f"one candidate should cost about 1.64, got {bar:.2f}"
+
+
+def test_permutation_bar_rises_with_candidates_but_stays_under_bonferroni():
+    """The whole reason for permuting: nested candidates are strongly correlated, so the
+    best-of-N is not as extreme as independence would predict. The bar must still rise
+    with the number searched -- otherwise the search is free, which it is not."""
+    from scipy.stats import norm
+
+    from scripts.expected_value_thresholds import permutation_critical_t
+
+    rng = np.random.default_rng(1)
+    profits = rng.normal(0.005, 0.05, 3000)
+    probabilities = rng.uniform(0, 1, 3000)
+    bars = []
+    for count in (2, 7, 15):
+        candidates = list(np.quantile(probabilities, np.linspace(0.15, 0.85, count)))
+        bar = permutation_critical_t(probabilities, profits, candidates, 40, permutations=1500)
+        bars.append(bar)
+        assert bar < norm.ppf(1 - 0.05 / count) + 0.05, (
+            f"{count} nested candidates should cost less than Bonferroni, got {bar:.2f}"
+        )
+    assert bars == sorted(bars), f"bar must not fall as more candidates are searched: {bars}"

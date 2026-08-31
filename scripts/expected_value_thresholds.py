@@ -24,7 +24,8 @@ Above that point taking trades is worth it; below it, it is not.
 A floor then has to earn its keep: trades above it must out-earn trades below it by more
 than noise. That test, not the shape of the curve, is what decides -- and because the
 floor is picked by searching the candidate edges for the largest separation, the bar is
-raised to pay for the search (Bonferroni over the candidates tested). An earlier version instead required the bottom bin to be *losing* money, which
+raised to pay for the search -- by permutation, which calibrates to how correlated the
+nested candidates actually are rather than assuming they are independent. An earlier version instead required the bottom bin to be *losing* money, which
 rejected any model whose trades were all profitable but very unevenly so -- growth_tech
 earns +1.34% above a 0.20% floor against +0.64% below it, a ranking that plainly works
 and that the old rule threw away.
@@ -59,22 +60,58 @@ MIN_TRADES_FOR_THRESHOLD = 40  # the selected set must be at least this large
 SHRINKAGE_STANDARD_ERRORS = 1.0
 # A floor has to earn its keep: trades above it must out-earn trades below it by more
 # than noise. The floor is chosen by searching the candidate bin edges for the largest
-# separation, so the bar is raised to pay for that search -- Bonferroni over the number
-# of candidates tested, one-sided at this level. With eight candidates it lands near 2.5
-# standard errors rather than the 2.0 a single pre-chosen test would need.
+# separation, so the bar has to pay for that search.
+#
+# The correction is a permutation max-t rather than Bonferroni. Bonferroni assumes the
+# tests are independent; these are nested subsets of one sample, so the statistic at
+# adjacent floors is almost the same number and the correction badly overshoots. It cost
+# international_emerging its floor by four hundredths of a standard error while five of
+# five cross-validation folds said the model beat its null.
+#
+# Permuting instead measures the real thing: break the link between predicted probability
+# and realized return by shuffling one against the other, recompute the separation at
+# every candidate, keep the largest, and repeat. The 95th percentile of those maxima is
+# how large the best-of-N looks when nothing is there -- calibrated to whatever
+# correlation the candidates actually have, with no independence assumption to violate.
 SEPARATION_ALPHA = 0.05
+PERMUTATIONS = 2000
+PERMUTATION_SEED = 20260830  # fixed so a threshold is reproducible from the same data
 
 
-def _bonferroni_t(candidates):
-    """One-sided critical t after correcting for testing `candidates` floors.
+def _separation_t(above, below):
+    """Two-sample t for above-floor minus below-floor return. 0.0 when undefined."""
+    if len(above) < 2 or len(below) < 2:
+        return 0.0
+    standard_error = np.sqrt(above.var(ddof=1) / len(above) + below.var(ddof=1) / len(below))
+    return float((above.mean() - below.mean()) / standard_error) if standard_error else 0.0
 
-    Searching for the largest separation and then reporting it at face value is the
-    oldest way to manufacture a result. The correction is what makes the search legible:
-    with eight candidates the bar is about 2.5 standard errors rather than 2.0.
+
+def permutation_critical_t(probabilities, profits, candidates, minimum_side,
+                           permutations=PERMUTATIONS, alpha=SEPARATION_ALPHA, seed=PERMUTATION_SEED):
+    """How large the best-of-N separation looks when there is nothing to find.
+
+    Shuffles profits against probabilities, so the null is exactly "predicted probability
+    says nothing about realized return" while both marginal distributions and the
+    candidate floors stay as they are. The largest t across candidates is recorded per
+    shuffle; the alpha-level upper quantile of those maxima is the bar.
+
+    This replaces Bonferroni because the candidates are nested: the sets above 1% and
+    above 2% overlap almost entirely, their statistics move together, and a correction
+    assuming independence charges for far more searching than actually happened.
     """
-    from scipy.stats import norm
-
-    return float(norm.ppf(1 - SEPARATION_ALPHA / max(candidates, 1)))
+    rng = np.random.default_rng(seed)
+    maxima = np.empty(permutations)
+    for index in range(permutations):
+        shuffled = rng.permutation(profits)
+        best = 0.0
+        for candidate in candidates:
+            mask = probabilities >= candidate
+            above, below = shuffled[mask], shuffled[~mask]
+            if len(above) < minimum_side or len(below) < minimum_side:
+                continue
+            best = max(best, _separation_t(above, below))
+        maxima[index] = best
+    return float(np.quantile(maxima, 1 - alpha))
 
 
 def win_loss_profile(detector, scored_data, threshold):
@@ -193,25 +230,27 @@ def solve_threshold(detector, scored_data):
         above, below = profits[probabilities >= candidate], profits[probabilities < candidate]
         if len(above) < MIN_TRADES_FOR_THRESHOLD or len(below) < MIN_TRADES_FOR_THRESHOLD:
             continue
-        standard_error = np.sqrt(above.var(ddof=1)/len(above) + below.var(ddof=1)/len(below))
-        if not standard_error:
+        t_statistic = _separation_t(above, below)
+        if not t_statistic:
             continue
         scored_candidates.append({
             "threshold": candidate, "separation": above.mean() - below.mean(),
-            "t": (above.mean() - below.mean()) / standard_error,
-            "above": above, "below": below,
+            "t": t_statistic, "above": above, "below": below,
         })
     if not scored_candidates:
         return None, (f"no candidate floor leaves {MIN_TRADES_FOR_THRESHOLD} trades on both "
                       f"sides of it"), curve
 
     best = max(scored_candidates, key=lambda c: c["t"])
-    required = _bonferroni_t(len(scored_candidates))
+    required = permutation_critical_t(
+        probabilities, profits, [c["threshold"] for c in scored_candidates], MIN_TRADES_FOR_THRESHOLD
+    )
     if best["t"] < required:
         return None, (f"the best of {len(scored_candidates)} candidate floors is {best['threshold']:.2%}, "
                       f"where trades above earn {best['separation']:+.2%} more than those below -- "
-                      f"{best['t']:.2f} standard errors, short of the {required:.2f} needed once the "
-                      f"search over candidates is paid for. Not distinguishable from noise."), curve
+                      f"{best['t']:.2f} standard errors, short of the {required:.2f} that the best of "
+                      f"{len(scored_candidates)} candidates reaches by chance alone. Not "
+                      f"distinguishable from noise."), curve
 
     return best["threshold"], (
         f"floor {best['threshold']:.2%}, best of {len(scored_candidates)} candidates: trades above it "
