@@ -21,10 +21,16 @@ lowest bin edge from which every higher bin is non-negative on a shrunk mean
 (mean - one standard error, the same discount scripts/select_thresholds.py applies).
 Above that point taking trades is worth it; below it, it is not.
 
-If no such point exists -- if the marginal curve is flat or negative all the way up --
-then the model's ranking does not identify profitable trades at any threshold, and that
-is reported rather than a number being manufactured. That is a real answer about the
-model, not a failure of the search.
+A floor then has to earn its keep: trades above it must out-earn trades below it by more
+than noise. That test, not the shape of the curve, is what decides -- and because the
+floor is picked by searching the candidate edges for the largest separation, the bar is
+raised to pay for the search (Bonferroni over the candidates tested). An earlier version instead required the bottom bin to be *losing* money, which
+rejected any model whose trades were all profitable but very unevenly so -- growth_tech
+earns +1.34% above a 0.20% floor against +0.64% below it, a ranking that plainly works
+and that the old rule threw away.
+
+If no floor separates, that is reported rather than a number being manufactured. It is a
+real answer about the model, not a failure of the search.
 
 Selection uses validation/ only. test/ is scored afterwards for reporting.
 
@@ -51,6 +57,24 @@ PROBABILITY_BINS = 8          # quantile bins over entry probability
 MIN_TRADES_PER_BIN = 25       # below this a bin's mean is noise, not a marginal return
 MIN_TRADES_FOR_THRESHOLD = 40  # the selected set must be at least this large
 SHRINKAGE_STANDARD_ERRORS = 1.0
+# A floor has to earn its keep: trades above it must out-earn trades below it by more
+# than noise. The floor is chosen by searching the candidate bin edges for the largest
+# separation, so the bar is raised to pay for that search -- Bonferroni over the number
+# of candidates tested, one-sided at this level. With eight candidates it lands near 2.5
+# standard errors rather than the 2.0 a single pre-chosen test would need.
+SEPARATION_ALPHA = 0.05
+
+
+def _bonferroni_t(candidates):
+    """One-sided critical t after correcting for testing `candidates` floors.
+
+    Searching for the largest separation and then reporting it at face value is the
+    oldest way to manufacture a result. The correction is what makes the search legible:
+    with eight candidates the bar is about 2.5 standard errors rather than 2.0.
+    """
+    from scipy.stats import norm
+
+    return float(norm.ppf(1 - SEPARATION_ALPHA / max(candidates, 1)))
 
 
 def win_loss_profile(detector, scored_data, threshold):
@@ -156,27 +180,44 @@ def solve_threshold(detector, scored_data):
                       f"({top['lower']:.2%}-{top['upper']:.2%}) shrinks to {top['shrunk_mean']:+.2%} "
                       f"on {top['num_trades']} trades. {detail}."), curve
 
-    if selected[0] is usable[0]:
-        # The profitable region starts at the bottom bin, so every trade qualifies and the
-        # "threshold" is not one -- it is the model declining to discriminate. Emitting 0
-        # here would silently turn the app into an unconditional trader.
-        return None, (f"every bin from the lowest ({usable[0]['lower']:.2%}) upward is non-negative, "
-                      f"so no threshold excludes anything -- the ranking does not separate "
-                      f"profitable trades from unprofitable ones. Trading on this model is "
-                      f"indistinguishable from trading on every bar."), curve
+    # Candidate floors: every usable bin edge except the lowest, which would exclude
+    # nothing. The curve's shape narrows the field -- only edges at or above `selected`
+    # sit in the region whose bins are all non-negative -- but where every bin is
+    # non-negative that constraint is vacuous and the whole range is fair game.
+    candidates = [band["lower"] for band in usable[1:]]
+    if not candidates:
+        return None, "only one usable bin -- nothing to separate", curve
 
-    threshold = selected[0]["lower"]
-    taken = int(np.sum(probabilities >= threshold))
-    if taken < MIN_TRADES_FOR_THRESHOLD:
-        return None, (f"the profitable region starts at {threshold:.2%} but holds only {taken} "
-                      f"trades (need {MIN_TRADES_FOR_THRESHOLD})"), curve
+    scored_candidates = []
+    for candidate in candidates:
+        above, below = profits[probabilities >= candidate], profits[probabilities < candidate]
+        if len(above) < MIN_TRADES_FOR_THRESHOLD or len(below) < MIN_TRADES_FOR_THRESHOLD:
+            continue
+        standard_error = np.sqrt(above.var(ddof=1)/len(above) + below.var(ddof=1)/len(below))
+        if not standard_error:
+            continue
+        scored_candidates.append({
+            "threshold": candidate, "separation": above.mean() - below.mean(),
+            "t": (above.mean() - below.mean()) / standard_error,
+            "above": above, "below": below,
+        })
+    if not scored_candidates:
+        return None, (f"no candidate floor leaves {MIN_TRADES_FOR_THRESHOLD} trades on both "
+                      f"sides of it"), curve
 
-    mean_above = float(profits[probabilities >= threshold].mean())
-    mean_below = float(profits[probabilities < threshold].mean())
-    return threshold, (f"marginal return is non-negative in every bin from {threshold:.2%} upward "
-                       f"({len(selected)} of {len(usable)} usable bins) and negative below: "
-                       f"{taken} trades at {mean_above:+.2%}/trade above, "
-                       f"{mean_below:+.2%}/trade below"), curve
+    best = max(scored_candidates, key=lambda c: c["t"])
+    required = _bonferroni_t(len(scored_candidates))
+    if best["t"] < required:
+        return None, (f"the best of {len(scored_candidates)} candidate floors is {best['threshold']:.2%}, "
+                      f"where trades above earn {best['separation']:+.2%} more than those below -- "
+                      f"{best['t']:.2f} standard errors, short of the {required:.2f} needed once the "
+                      f"search over candidates is paid for. Not distinguishable from noise."), curve
+
+    return best["threshold"], (
+        f"floor {best['threshold']:.2%}, best of {len(scored_candidates)} candidates: trades above it "
+        f"earn {best['above'].mean():+.2%} against {best['below'].mean():+.2%} below, a separation of "
+        f"{best['separation']:+.2%} at {best['t']:.2f} standard errors (needed {required:.2f} after "
+        f"correcting for the search) on {len(best['above'])} trades"), curve
 
 
 def run_category(category):

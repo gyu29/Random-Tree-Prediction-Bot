@@ -211,15 +211,25 @@ def test_curve_bins_by_quantile_so_every_bin_has_trades():
 def test_floor_is_found_when_the_bottom_band_loses_and_the_rest_win(monkeypatch):
     threshold, note, _ = _solve([(200, -0.02), (120, 0.03), (120, 0.04)], monkeypatch)
     assert threshold is not None and threshold > 0
-    assert "non-negative in every bin" in note
+    assert "standard errors" in note
 
 
-def test_no_threshold_when_every_band_is_positive_from_the_bottom(monkeypatch):
-    """Nothing is excluded, so the 'threshold' is the model declining to discriminate.
-    Emitting 0 here would silently turn the app into an unconditional trader."""
-    threshold, note, _ = _solve([(200, 0.02), (200, 0.025), (200, 0.03)], monkeypatch)
+def test_floor_is_found_when_bands_are_all_positive_but_clearly_separated(monkeypatch):
+    """All bands profitable is not a reason to reject. An earlier rule required the bottom
+    band to be *losing* money, which threw away any model whose trades were all profitable
+    but very unevenly so -- growth_tech earns +1.34% above its floor against +0.64% below,
+    a ranking that plainly works. What matters is separation, not the sign of the bottom."""
+    threshold, note, _ = _solve([(200, 0.005), (200, 0.04), (200, 0.05)], monkeypatch)
+    assert threshold is not None and threshold > 0
+    assert "standard errors" in note
+
+
+def test_no_threshold_when_bands_are_positive_but_indistinguishable(monkeypatch):
+    """The case the old rule was reaching for and missed: every band profitable *and*
+    flat, so a floor would exclude trades no worse than the ones it keeps."""
+    threshold, note, _ = _solve([(200, 0.020), (200, 0.021), (200, 0.020)], monkeypatch)
     assert threshold is None
-    assert "no threshold excludes anything" in note
+    assert "distinguishable from noise" in note
 
 
 def test_no_threshold_when_the_ranking_is_inverted(monkeypatch):

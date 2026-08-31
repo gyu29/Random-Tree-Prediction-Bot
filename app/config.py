@@ -189,153 +189,110 @@ CALIBRATED_SWING_THRESHOLDS = {
     "inflation_safe_haven": 0.07,
     "small_cap": 0.08,
     "international_emerging": 0.09,
-    "market_beta": 0.08,
+    # 6%, not 8%. Widening the universe changed what these labels describe, and both of
+    # the values below were left over from the seven-ticker era.
+    #
+    # At 8% market_beta's positive rate is 2.90% -- inside the band, but only 31 examples
+    # reach the calibration slice, barely over MIN_POSITIVES_FOR_CALIBRATION and few
+    # enough that the model fell back to a sigmoid fit. 6% gives 6.53% and 221 positives,
+    # enough for isotonic.
+    "market_beta": 0.06,
+    # 20%, not 15%. growth_tech's universe now holds individual semiconductor and
+    # software names alongside the sector funds, and a 15% move inside ten days is
+    # ordinary for them: 8.60% of rows qualified, above the 2-8% band the working
+    # categories sit in, which makes the label describe a common event rather than a
+    # swing. 20% brings it to 4.28%.
+    "growth_tech": 0.20,
 }
 CALIBRATED_DECISION_THRESHOLDS = {
-    # Computed, not swept: the lowest entry probability from which every marginal-return
-    # bin is non-negative (scripts/expected_value_thresholds.py). Calibrated probabilities,
-    # so most are small -- a 4% chance of a swing is a high reading against a base rate
-    # under 1%. Do not round these to two decimals; 0.0011 becomes 0.00, which would turn
-    # the app into an unconditional trader.
-    "credit_conditions": 0.0075,
-    "growth_tech": 0.0124,
-    "international_emerging": 0.0161,
+    # Computed, not swept: the candidate floor whose above/below separation survives a
+    # multiplicity-corrected significance test (scripts/expected_value_thresholds.py).
+    # Calibrated probabilities, so some are small -- do not round to two decimals, since
+    # 0.0020 becomes 0.00 and turns the app into an unconditional trader.
+    "growth_tech": 0.0020,
     "energy_commodity": 0.0429,
-    "market_beta": 0.0515,
+    "market_beta": 0.4514,
+    # No floor survives; these five are gated by CATEGORIES_FAILING_VALIDATION, so the
+    # values are inert and only keep the Backtest page reproducible.
+    "small_cap": 0.0011,
+    "credit_conditions": 0.0075,
+    "international_emerging": 0.0161,
     "inflation_safe_haven": 0.1864,
     "rates_recession": 0.3238,
-    # No floor exists; gated by CATEGORIES_FAILING_VALIDATION, so this value is inert and
-    # only keeps the Backtest page reproducible.
-    "small_cap": 0.0011,
 }
 
 # Categories whose model must not be presented as a trading signal.
 #
-# The test is scripts/expected_value_thresholds.py: with calibrated probabilities, bin
-# every trade the model would open with no threshold at all by its entry probability and
-# read the marginal return per bin. A category ships only if some probability floor
-# exists whose bins are all non-negative and whose bottom bin is excluded -- only, that
-# is, if the model's ranking separates profitable trades from unprofitable ones.
+# A category ships only if a probability floor exists whose bins all earn non-negative
+# marginal returns AND above which trades demonstrably out-earn those below it
+# (scripts/expected_value_thresholds.py). The floor is chosen by searching the candidate
+# bin edges for the largest separation, so the significance bar is Bonferroni-corrected
+# for that search -- 2.2 to 2.5 standard errors depending on how many candidates a
+# category offers, rather than the 2.0 a single pre-chosen test would need.
 #
-# Measured 2026-08-30, after three fixes that each changed the answer: a look-ahead in
-# the backtest scoring path that back-filled ~10% of every decision window from its own
-# future; positions opened on the last eligible bar never being closed or counted; and
-# rates_recession's ticker list, which had been widened into four copies of the same
-# long-Treasury trade. Nothing measured before those is quoted here.
+# That rule is stricter than the one it replaces, in both directions. The old version
+# required the bottom bin to be *losing* money, which threw away any model whose trades
+# were all profitable but very unevenly so -- growth_tech earns +1.23% per trade above
+# its floor against +0.61% below, a ranking that plainly works and that the old rule
+# rejected outright. It also never made a floor prove it beat having no floor, which
+# several categories turn out not to.
 #
-# Edge over the model-off null on test/, in standard errors, at the floor below. The
-# floor is what decides shipping; the edge is how much confidence to place in it:
+# Measured 2026-08-30. Separation is above-floor minus below-floor return in standard
+# errors, on validation, with that category's corrected bar in brackets:
 #
-#   ship  international_emerging  floor 1.61%   +2.68 SE   2303 trades
-#   ship  inflation_safe_haven    floor 18.64%  +2.40 SE    425 trades
-#   ship  credit_conditions       floor 0.75%   +2.12 SE   1095 trades
-#   ship  rates_recession         floor 32.38%  +1.95 SE    213 trades
-#   ship  energy_commodity        floor 4.29%   +1.58 SE    638 trades
-#   ship  market_beta             floor 5.15%   +1.03 SE    248 trades
-#   ship  growth_tech             floor 1.24%   +0.99 SE   2623 trades
+#   ship  market_beta       floor 45.14%   test +0.87%/trade over  308 trades
+#   ship  growth_tech       floor 0.20%    test +1.23%/trade over 3018 trades
+#   ship  energy_commodity  floor 4.29%    test +1.21%/trade over  638 trades
 #
-#   GATE  small_cap  its ranking does not transfer. On validation the marginal curve is
-#         close to textbook -- rising through +0.45%, +0.72%, +1.64%, +1.97% and peaking
-#         at +5.66% per trade on an 81.7% win rate in the 19-53% band -- and then the top
-#         band (above 53%) collapses to -2.50%. Because a floor has to be open-ended
-#         upward, that collapsing tail alone denies it one.
+#   GATE  international_emerging  2.35 [2.39] -- misses by four hundredths of a standard
+#         error, with five of five cross-validation folds beating its null behind it.
+#         Read as not established rather than absent: Bonferroni assumes independent
+#         tests and these candidate floors are nested, so the correction is conservative
+#         here. First category to revisit.
+#   GATE  inflation_safe_haven    2.15 [2.33]
+#   GATE  credit_conditions       2.07 [2.45]
+#   GATE  rates_recession         1.30 [2.24]
+#   GATE  small_cap  no floor at any level: its top band inverts, marginal return falling
+#         as predicted probability rises.
 #
-#         A band rather than a floor was tried, since the shape invites it: trade between
-#         0.2% and 30% and skip the extreme tail. On validation it beats taking every
-#         trade, +1.12% against +0.99%. On test it is +0.47% against +0.48% -- exactly
-#         nothing. The structure is real in the window it was measured in and absent in
-#         the next one, which is what a fitted artifact looks like, so no band is applied.
+# Three categories that shipped under the old rule no longer do, including the one with
+# the strongest independent evidence. That is the rule getting stricter, not the models
+# getting worse. The honest reading is that most of these edges were never established --
+# they were reported at a bar that did not account for having gone looking for them.
 #
-#         Not a labelling or calibration problem, unlike credit_conditions': at its 8%
-#         swing_threshold it produces a 4.51% positive rate, inside the target band, and
-#         calibrates cleanly on 294 positives. Overall it is +0.37 SE against its null --
-#         indistinguishable from ignoring it.
-#
-#         Its 4-of-5 cross-validation folds beating the null looked like a contradiction
-#         and is not: those were measured at an inherited threshold of 0.0011, which
-#         admits essentially every trade. That figure was measuring the entry/exit
-#         machinery with the model switched off, not the model.
-#
-#         Kept rather than deleted. The category is a real factor and the config records
-#         exactly what its model has to clear to come back; deleting it would also leave
-#         the gate with nothing exercising it in normal use.
-#
-# Regime dependence, measured on validation/ and test/ separately by bucketing each
-# trade on the VIX at entry. Three categories lose their edge when volatility is high,
-# consistently on both splits: growth_tech (+0.49% calm / -0.62% stress on validation,
-# +0.05% / -0.12% on test), international_emerging (-0.05% / -1.05%, +0.17% / -0.53%)
-# and market_beta, which is negative in both regimes on both splits. Treat any signal
-# from those three above VIX 30 as unsupported.
-#
-# No guard is fitted for it. The stress samples run 20-40 trades on validation, and a
-# cutoff chosen to make those look good would be the same overfitting the rest of this
-# pipeline was cleaned of. Fixing it properly needs either more stress data -- and high-
-# VIX periods are rare by construction, so there is none to find -- or a regime-conditional
-# model, which is real work rather than a threshold.
-#
-# One correction to an earlier claim recorded here: credit_conditions was described as
-# failing in credit stress, on the strength of a -3.32 SE cross-validation fold covering
-# March 2020 and a -0.45% test bucket. It does not replicate. On validation its stress
-# edge is +0.13%, and the two negative readings are the same event seen twice. It is a
-# single episode, not an established weakness, and the earlier wording overstated it.
-#
-# Purged walk-forward cross-validation (scripts/walk_forward_cv.py, 5 expanding-window
-# folds), re-run on the fixed path. Folds in which the category beat its own null, out of
-# the folds where enough trades fired to compare:
-#
-#   international_emerging  5/5   PR-AUC 0.283 +/- 0.129   ROC-AUC 0.859 +/- 0.015
-#   inflation_safe_haven    4/5   PR-AUC 0.169 +/- 0.069   ROC-AUC 0.866 +/- 0.046
-#   energy_commodity        3/5   PR-AUC 0.182 +/- 0.072   ROC-AUC 0.845 +/- 0.045
-#   credit_conditions       3/5   PR-AUC 0.195 +/- 0.113   ROC-AUC 0.838 +/- 0.030
-#   market_beta             2/4   PR-AUC 0.262 +/- 0.207   ROC-AUC 0.909 +/- 0.032
-#
-# market_beta is the one the folds do not corroborate: two of four is a tie, not a
-# majority, and it also carries the weakest test-side edge of the four (+1.16 SE) and by
-# far the widest PR-AUC spread across regimes -- 0.26 give or take 0.21 is a number that
-# should never be quoted on its own. It ships because the stated criterion is the
-# marginal-return curve and it has a floor, but of the four it is the one to drop first
-# if the evidence has to be narrowed.
-#
-# credit_conditions carries a caveat its 3/5 hides, and it is the sharpest thing
-# cross-validation has surfaced here. Its folds read +0.70, +2.04, +0.48, -3.32, -0.12
-# standard errors. The -3.32 fold validates on the block ending 2020-04-08, which
-# contains the March 2020 credit dislocation -- VIX peaked at 82.7 inside it against a
-# 17.6 median across the whole series. The model works in ordinary conditions and fails,
-# by the widest margin of any fold measured anywhere in this project, in precisely the
-# event the category is named for. It ships because the curve is clean, a majority of
-# folds beat the null, and it is +2.16 SE over that null on test -- but it should not be
-# leaned on during a credit stress event, which is the only time anyone would reach for
-# it. That is a modelling problem, not a threshold one.
-#
-# The pooled sweep independently reselected credit_conditions' 0.75% floor, the second
-# category where the two methods converge.
-#
-# international_emerging is the opposite case and the strongest result in the project:
-# it beat its null in every fold, and cross-validation independently selected 1.61% --
-# the same threshold the marginal-return curve arrived at. The two methods had disagreed
-# wildly everywhere before the look-ahead was removed; here they now agree exactly.
-#
-# They still disagree elsewhere, and the curve still decides. Pooled folds would put
-# market_beta and inflation_safe_haven at 65%, because the pooled sweep asks only whether
-# the average trade above a floor is profitable while the curve asks whether every
-# probability band above it is -- an average can be carried by one good band. The curve
-# also reads the deployed model, where the pooled sweep reads five fold models.
-#
-# Two gated categories look better under cross-validation than under the curve and are
-# worth revisiting: small_cap beat its null in 4 of 5 folds and the pooled sweep found an
-# interior peak at 20% scoring +1.96%, while its curve is inverted; growth_tech beat its
-# null in 4 of 5. Neither changes the gate, because a category whose ranking cannot
-# separate profitable trades from unprofitable ones has nothing to threshold, but both
-# are the obvious places to look next.
+# small_cap is the one failing on shape rather than significance. On validation its curve
+# is close to textbook, rising to +5.66% per trade on an 81.7% win rate in the 19-53%
+# band, and then the top band collapses to -2.50%. A band rather than a floor was tried,
+# since the shape invites it: on validation it beats taking every trade, +1.12% against
+# +0.99%; on test it returns +0.47% against +0.48%, exactly nothing. Real in the window
+# it was measured in and absent in the next, so no band is applied. Its labels and
+# calibration are fine -- an 8% swing_threshold gives a 4.51% positive rate inside the
+# target band, calibrating on 294 positives -- so there is no configuration fix here.
 #
 # Re-measure after any retrain. The gate is deliberately not a refusal: Analyze still
 # scores these categories, because investigating a model requires being able to run it.
 # What stops is presenting the output as actionable -- no alerts, no place in the
 # screener ranking, and a warning on every payload (app/detector.py, app/trading_system.py).
 CATEGORIES_FAILING_VALIDATION = {
+    "international_emerging": (
+        "This model's advantage over ignoring it is not established at the confidence "
+        "this system requires. Not a trading signal."
+    ),
+    "inflation_safe_haven": (
+        "This model's advantage over ignoring it is not established at the confidence "
+        "this system requires. Not a trading signal."
+    ),
+    "credit_conditions": (
+        "This model's advantage over ignoring it is not established at the confidence "
+        "this system requires. Not a trading signal."
+    ),
+    "rates_recession": (
+        "This model's advantage over ignoring it is not established at the confidence "
+        "this system requires. Not a trading signal."
+    ),
     "small_cap": (
-        "This model's ranking is inverted -- the trades it rates highest are the ones "
-        "that lose money. Its output is not a trading signal."
+        "This model's ranking is inverted at the top of its range -- the trades it rates "
+        "highest are the ones that lose money. Its output is not a trading signal."
     ),
 }
 
