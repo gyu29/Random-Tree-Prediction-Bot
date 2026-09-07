@@ -23,7 +23,12 @@ import os
 import pandas as pd
 
 from app import model_registry
-from app.config import STOCKS_FILE_PATH
+from app.config import (
+    DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_MIN_HOLD_PERIODS,
+    DEFAULT_SWING_THRESHOLD,
+    STOCKS_FILE_PATH,
+)
 from app.data_loader import category_for_symbol, category_train_dir, list_categories
 from app.detector import SwingTradeDetector, walk_forward_backtest
 from app.market_data import AlphaVantageProvider, KRXProvider
@@ -108,8 +113,9 @@ class SwingTradingSystem:
         self,
         category,
         data_directory=None,
-        swing_threshold=0.15,
-        lookforward_periods=10,
+        swing_threshold=None,
+        lookforward_periods=None,
+        min_hold_periods=None,
         rf_estimators=250,
         xgb_learning_rate=0.05,
         xgb_max_depth=6,
@@ -123,8 +129,25 @@ class SwingTradingSystem:
             raise SecurityValidationError(f"Unknown category: {category}")
         data_directory = data_directory or category_train_dir(category)
         validated_data_directory = SecurityValidator.validate_data_directory(data_directory, self.security_config)
-        validated_threshold = SecurityValidator.validate_float(swing_threshold, "swing_threshold", 0.01, 1.0)
-        validated_lookforward = SecurityValidator.validate_int(lookforward_periods, "lookforward_periods", 2, 90)
+        # Defaults come from app/config.py rather than being written out here. They were
+        # literals -- swing_threshold=0.15, lookforward_periods=10 -- and when the project
+        # moved to a six-to-twelve month horizon they silently kept passing 10 against a
+        # minimum hold of 126, so every category failed to train with
+        # "lookforward_periods must be >= min_hold_periods" and nothing said why.
+        swing_threshold = DEFAULT_SWING_THRESHOLD if swing_threshold is None else swing_threshold
+        lookforward_periods = (DEFAULT_LOOKFORWARD_PERIODS if lookforward_periods is None
+                               else lookforward_periods)
+        min_hold_periods = DEFAULT_MIN_HOLD_PERIODS if min_hold_periods is None else min_hold_periods
+
+        validated_threshold = SecurityValidator.validate_float(swing_threshold, "swing_threshold", 0.01, 2.0)
+        validated_lookforward = SecurityValidator.validate_int(lookforward_periods, "lookforward_periods", 2, 400)
+        validated_min_hold = SecurityValidator.validate_int(min_hold_periods, "min_hold_periods", 0, 399)
+        if validated_min_hold >= validated_lookforward:
+            raise SecurityValidationError(
+                f"min_hold_periods ({validated_min_hold}) must be below lookforward_periods "
+                f"({validated_lookforward}): the exit window runs from the first to the second, "
+                f"so an empty or inverted window has no outcome to label."
+            )
         # Bounds match the Train model UI's spinbox ranges (ui/pages/train.py) so a value the
         # UI allows the user to pick can never be rejected here.
         validated_rf_estimators = SecurityValidator.validate_int(rf_estimators, "rf_estimators", 50, 500)
@@ -134,6 +157,7 @@ class SwingTradingSystem:
         trainer = SwingTradeTrainer(
             swing_threshold=validated_threshold,
             lookforward_periods=validated_lookforward,
+            min_hold_periods=validated_min_hold,
             rf_estimators=validated_rf_estimators,
             xgb_learning_rate=validated_xgb_learning_rate,
             xgb_max_depth=validated_xgb_max_depth,

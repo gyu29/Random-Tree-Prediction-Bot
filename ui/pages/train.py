@@ -1,7 +1,11 @@
 from PySide6 import QtWidgets
 
 from app import model_registry
-from app.config import DEFAULT_LOOKFORWARD_PERIODS, DEFAULT_SWING_THRESHOLD
+from app.config import (
+    DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_MIN_HOLD_PERIODS,
+    DEFAULT_SWING_THRESHOLD,
+)
 from app.data_loader import category_symbols_on_disk, category_train_dir, list_categories
 from ui.widgets import BasePage, Card
 
@@ -31,17 +35,27 @@ class TrainPage(BasePage):
         self.max_depth = QtWidgets.QSpinBox()
         self.max_depth.setRange(3, 10)
         self.max_depth.setValue(6)
+        # Ranges mirror the bounds in SwingTradingSystem.train_model, so a value this form
+        # accepts is never rejected downstream. They are wide because the exit window is
+        # now measured in months: 252 sessions is a year, and growth_tech's threshold is
+        # 90%.
+        self.min_hold = QtWidgets.QSpinBox()
+        self.min_hold.setRange(0, 399)
+        self.min_hold.setValue(DEFAULT_MIN_HOLD_PERIODS)
+        self.min_hold.setSuffix(" sessions")
         self.swing_window = QtWidgets.QSpinBox()
-        self.swing_window.setRange(20, 200)
+        self.swing_window.setRange(2, 400)
         self.swing_window.setValue(DEFAULT_LOOKFORWARD_PERIODS)
+        self.swing_window.setSuffix(" sessions")
         self.swing_threshold = QtWidgets.QDoubleSpinBox()
-        self.swing_threshold.setRange(1, 50)
+        self.swing_threshold.setRange(1, 200)
         self.swing_threshold.setSuffix("%")
         self.swing_threshold.setValue(DEFAULT_SWING_THRESHOLD * 100)
         form.addRow("RF estimators", self.rf_estimators)
         form.addRow("XGBoost learning rate", self.learning_rate)
         form.addRow("XGBoost max depth", self.max_depth)
-        form.addRow("Swing window", self.swing_window)
+        form.addRow("Minimum hold", self.min_hold)
+        form.addRow("Exit window ends", self.swing_window)
         form.addRow("Swing threshold", self.swing_threshold)
         settings.layout.addLayout(form)
         train = QtWidgets.QPushButton("Train model")

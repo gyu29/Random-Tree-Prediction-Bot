@@ -177,9 +177,11 @@ def test_feature_importances_still_come_from_the_base_estimators():
 def _trades(bands):
     """bands: [(count, mean_profit)] from lowest probability band upward.
 
-    Entry dates are one per trade and strictly increasing, so every block of consecutive
-    dates holds independent trades -- the significance machinery then has no clustering
-    to find, which is what these fixtures intend.
+    Entry dates are one per trade, strictly increasing, and spaced five calendar days
+    apart, so every block holds independent trades and the run spans enough years to clear
+    MIN_BLOCKS_FOR_RESAMPLING. The significance machinery then has no clustering to find
+    and no block shortage to report, which is what these fixtures intend -- they are here
+    to exercise the shape of the marginal curve, nothing else.
     """
     probabilities, profits = [], []
     rng = np.random.default_rng(0)
@@ -190,7 +192,8 @@ def _trades(bands):
         profits.extend(draws - draws.mean() + mean)
         base += 0.05
     probabilities, profits = np.asarray(probabilities), np.asarray(profits)
-    dates = pd.bdate_range("2015-01-01", periods=len(profits), tz="UTC").to_numpy()
+    dates = (pd.Timestamp("2015-01-01", tz="UTC")
+             + pd.to_timedelta(np.arange(len(profits)) * 5, unit="D")).to_numpy()
     order = np.argsort(probabilities)
     return probabilities[order], profits[order], dates
 
@@ -273,7 +276,7 @@ def test_too_few_trades_overall_yields_no_threshold(monkeypatch):
 def test_permutation_bar_collapses_toward_a_single_test_with_one_candidate():
     """With nothing searched over there is nothing to pay for, so the bar should sit near
     an ordinary one-sided critical value rather than far above it."""
-    from scripts.expected_value_thresholds import (
+    from scripts.expected_value_thresholds import (  # noqa: F401
         block_bootstrap_se, date_blocks, permutation_critical_t,
     )
 
@@ -281,7 +284,7 @@ def test_permutation_bar_collapses_toward_a_single_test_with_one_candidate():
     profits = rng.normal(0.005, 0.05, 2000)
     probabilities = rng.uniform(0, 1, 2000)
     dates = pd.bdate_range("2010-01-01", periods=2000, tz="UTC").to_numpy()
-    blocks = date_blocks(dates)
+    blocks = date_blocks(dates, block_length=10)
     candidate = float(np.quantile(probabilities, 0.5))
     errors = [block_bootstrap_se(profits, probabilities >= candidate, blocks, replicates=400)]
     bar = permutation_critical_t(profits, probabilities, [candidate], errors, blocks, 40,
@@ -291,7 +294,7 @@ def test_permutation_bar_collapses_toward_a_single_test_with_one_candidate():
 
 def test_permutation_bar_rises_as_more_candidates_are_searched():
     """The search is not free: looking at more floors must raise the bar."""
-    from scripts.expected_value_thresholds import (
+    from scripts.expected_value_thresholds import (  # noqa: F401
         block_bootstrap_se, date_blocks, permutation_critical_t,
     )
 
@@ -299,7 +302,7 @@ def test_permutation_bar_rises_as_more_candidates_are_searched():
     profits = rng.normal(0.005, 0.05, 2000)
     probabilities = rng.uniform(0, 1, 2000)
     dates = pd.bdate_range("2010-01-01", periods=2000, tz="UTC").to_numpy()
-    blocks = date_blocks(dates)
+    blocks = date_blocks(dates, block_length=10)
     bars = []
     for count in (1, 8):
         candidates = list(np.quantile(probabilities, np.linspace(0.2, 0.8, count)))
@@ -325,7 +328,7 @@ def test_block_bootstrap_widens_the_error_when_trades_are_clustered():
     scattered = rng.normal(0, 0.04, days * per_day)
 
     dates = np.repeat(pd.bdate_range("2010-01-01", periods=days, tz="UTC").to_numpy(), per_day)
-    blocks = date_blocks(dates)
+    blocks = date_blocks(dates, block_length=10)
     mask = np.tile([True] * per_day, days).astype(bool)
     mask[: days * per_day // 2] = False
 
@@ -334,3 +337,115 @@ def test_block_bootstrap_widens_the_error_when_trades_are_clustered():
     assert clustered_se > scattered_se, (
         f"clustered returns must yield the larger error: {clustered_se:.5f} vs {scattered_se:.5f}"
     )
+
+
+# -- the model-vs-null comparison ------------------------------------------------------
+
+
+def _two_run_trades(years=9, seed=11):
+    """A model run and a model-off null run over one shared price history.
+
+    Both react to the same shocks and hold for six months, which is the dependence the
+    paired bootstrap exists to preserve: they are not two independent samples of anything.
+    Spans several years because at this horizon a block is a year wide.
+    """
+    rng = np.random.default_rng(seed)
+    days, hold = years * 252, 126
+    path = np.concatenate([[0.0], np.cumsum(rng.normal(0, 0.01, days + hold))])
+    calendar = pd.bdate_range("2010-01-01", periods=days, tz="UTC").to_numpy()
+
+    def run(count):
+        entries = np.sort(rng.choice(days, size=count, replace=False))
+        return path[entries + hold] - path[entries], calendar[entries]
+
+    model_profits, model_dates = run(days // 12)
+    null_profits, null_dates = run(days // 8)
+    return model_profits, model_dates, null_profits, null_dates
+
+
+def test_blocks_follow_the_calendar_not_the_count_of_entry_dates():
+    """The defect this replaces, and it was silent. Blocks used to advance by 252 entries
+    in the list of distinct entry dates; a six-month hold produces only a few dozen
+    distinct entry dates across an entire test split, so every category collapsed to one
+    block, every resample drew the identical trades, and the standard error came back
+    0.0 -- read downstream as an edge of exactly zero rather than as no measurement."""
+    from scripts.expected_value_thresholds import date_blocks
+
+    # 30 distinct entry dates, heavily clustered, spread across eight years.
+    dates = np.repeat(
+        pd.to_datetime(["2010-03-01", "2011-06-01", "2012-09-01", "2013-01-15", "2014-07-01",
+                        "2015-11-01", "2016-04-01", "2017-08-01", "2018-02-01", "2019-05-01"]).to_numpy(),
+        12,
+    )
+    blocks = date_blocks(dates)
+    assert len(blocks) >= 6, (
+        f"ten dates across nine years must not be one block: got {len(blocks)}"
+    )
+    assert sum(len(b) for b in blocks) == len(dates), "every trade belongs to exactly one block"
+
+
+def test_too_few_blocks_reports_no_measurement_rather_than_no_error():
+    """A standard error of 0.0 is a claim of perfect precision, and it arrives exactly
+    when precision is absent. Callers must be handed NaN so they can say so."""
+    from scripts.expected_value_thresholds import (
+        block_bootstrap_difference_se,
+        block_bootstrap_se,
+        paired_date_blocks,
+    )
+
+    model_p, model_d, null_p, null_d = _two_run_trades(years=2)
+    blocks = paired_date_blocks(model_d, null_d)
+    assert len(blocks) < 6, "fixture is meant to be too short to resample"
+    assert np.isnan(block_bootstrap_difference_se(model_p, null_p, blocks, replicates=200))
+    assert np.isnan(block_bootstrap_se(model_p, np.arange(len(model_p)) % 2 == 0,
+                                       [np.arange(len(model_p))], replicates=200))
+
+
+def test_paired_blocks_keep_both_runs_on_one_partition():
+    """Every trade from both runs lands in exactly one block, indexed off a shared origin.
+    Partitioned separately, a block kind to the model and the same block kind to the null
+    would resample independently and their shared luck would count twice."""
+    from scripts.expected_value_thresholds import paired_date_blocks
+
+    model_p, model_d, null_p, null_d = _two_run_trades()
+    blocks = paired_date_blocks(model_d, null_d)
+
+    assert sorted(np.concatenate([b[0] for b in blocks])) == list(range(len(model_p)))
+    assert sorted(np.concatenate([b[1] for b in blocks])) == list(range(len(null_p)))
+
+
+def test_an_edge_of_zero_stays_inside_two_standard_errors():
+    """Calibration check. A resampler that only ever widened its error would pass every
+    other test here by reporting infinity; when the two runs differ by nothing but noise,
+    the measured edge has to sit inside its own error."""
+    from scripts.expected_value_thresholds import (
+        block_bootstrap_difference_se,
+        paired_date_blocks,
+    )
+
+    for seed in (5, 11, 23):
+        model_p, model_d, null_p, null_d = _two_run_trades(seed=seed)
+        error = block_bootstrap_difference_se(
+            model_p, null_p, paired_date_blocks(model_d, null_d), replicates=800
+        )
+        edge = float(np.mean(model_p) - np.mean(null_p))
+        assert abs(edge) < 2 * error, f"seed {seed}: edge {edge:+.4f} vs SE {error:.4f}"
+
+
+def test_a_handful_of_model_trades_cannot_report_an_edge():
+    """The failure this guard exists for. At the deployed floor one category took a single
+    trade against its null's 142, and the paired resample called it +12.75 standard errors:
+    almost every replicate was discarded for containing no model trade, and the agreement
+    of the few survivors read as precision. Blocks where only one side traded carry no
+    difference and must not be counted toward the minimum."""
+    from scripts.expected_value_thresholds import (
+        block_bootstrap_difference_se,
+        paired_date_blocks,
+    )
+
+    _, _, null_p, null_d = _two_run_trades()
+    model_p, model_d = null_p[:1], null_d[:1]
+    blocks = paired_date_blocks(model_d, null_d)
+
+    assert len(blocks) >= 6, "the null alone spans plenty of blocks -- that is the trap"
+    assert np.isnan(block_bootstrap_difference_se(model_p, null_p, blocks, replicates=400))

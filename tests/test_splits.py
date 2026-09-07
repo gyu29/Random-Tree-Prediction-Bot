@@ -47,7 +47,7 @@ from scripts.build_factor_datasets import (  # noqa: E402
     split_by_cutoffs,
 )
 
-TRADING_DAYS = pd.bdate_range("2000-01-03", periods=6000, tz="UTC")
+TRADING_DAYS = pd.bdate_range("1990-01-02", periods=15000, tz="UTC")
 
 
 def _ohlcv(start_position, rows, seed=0):
@@ -73,16 +73,24 @@ def _ohlcv(start_position, rows, seed=0):
 def _staggered_category():
     """A category shaped like market_beta: one very long history plus six shorter ones
     that start later and run to the same recent end. This is the layout the per-symbol
-    percentage split handled badly."""
-    end = 5800
+    percentage split handled badly.
+
+    Spans are generous because the evaluation windows are now sized from the horizon
+    rather than as fractions: validation and test together claim the last ~4200 sessions
+    of the calendar (see build_factor_datasets._required_sessions), on top of a 252-session
+    embargo at each seam. A symbol that begins inside that tail has no training rows at
+    all -- correctly, since there is no history left in front of it -- so the fixture
+    starts every symbol well clear of it.
+    """
+    end = 14000
     return {
         "LONG": _ohlcv(0, end, seed=1),          # the ^GSPC-shaped outlier
-        "MID_A": _ohlcv(800, end - 800, seed=2),
-        "MID_B": _ohlcv(1200, end - 1200, seed=3),
-        "MID_C": _ohlcv(1800, end - 1800, seed=4),
-        "LATE_A": _ohlcv(3000, end - 3000, seed=5),
-        "LATE_B": _ohlcv(3600, end - 3600, seed=6),
-        "LATE_C": _ohlcv(4200, end - 4200, seed=7),
+        "MID_A": _ohlcv(2000, end - 2000, seed=2),
+        "MID_B": _ohlcv(4000, end - 4000, seed=3),
+        "MID_C": _ohlcv(6000, end - 6000, seed=4),
+        "LATE_A": _ohlcv(7500, end - 7500, seed=5),
+        "LATE_B": _ohlcv(8250, end - 8250, seed=6),
+        "LATE_C": _ohlcv(9000, end - 9000, seed=7),
     }
 
 
@@ -154,6 +162,40 @@ def test_one_very_long_history_does_not_drag_the_cutoff_before_the_other_symbols
         assert history.index.min() < train_end, f"{symbol} starts after the train cutoff"
         frames = split_by_cutoffs(history, train_end, validation_end)
         assert not frames["train"].empty, f"{symbol} got no training rows"
+
+
+def test_evaluation_windows_are_sized_from_the_horizon_not_as_a_fraction():
+    """A fraction of the calendar was the right shape at a ten-day hold and the wrong one
+    at six-to-twelve months: 15% came to a few hundred sessions, which cannot contain a
+    single entry-to-exit, so validation produced zero trades and the threshold search read
+    an empty sample without anything raising. Each window now gets what it must hold."""
+    from scripts.build_factor_datasets import _required_sessions
+
+    histories = _staggered_category()
+    train_end, validation_end = category_cutoffs(histories)
+    _, validation_need, test_need = _required_sessions()
+
+    end = max(h.index.max() for h in histories.values())
+    validation_sessions = _position_of(validation_end) - _position_of(train_end)
+    test_sessions = _position_of(end) - _position_of(validation_end) + 1
+
+    assert validation_sessions >= validation_need, (
+        f"validation got {validation_sessions} sessions, needs {validation_need}"
+    )
+    assert test_sessions >= test_need, f"test got {test_sessions} sessions, needs {test_need}"
+
+
+def test_a_category_too_short_for_the_horizon_is_refused_not_squeezed():
+    """The four categories this actually rejects have 15-17 years of broad coverage, which
+    a six-to-twelve month hold cannot divide three ways. Squeezing them would produce
+    windows that look like splits and measure nothing, so the split refuses and says by
+    how much it is short."""
+    from scripts.build_factor_datasets import InsufficientHistory, _required_sessions
+
+    need = sum(_required_sessions())
+    histories = {name: _ohlcv(0, need - 500, seed=index) for index, name in enumerate("ABC")}
+    with pytest.raises(InsufficientHistory, match="Short by"):
+        category_cutoffs(histories)
 
 
 def test_rows_are_partitioned_at_the_cutoffs():
@@ -237,7 +279,7 @@ def test_symbol_starting_after_the_train_cutoff_gets_no_train_rows():
     histories = _staggered_category()
     train_end, validation_end = category_cutoffs(histories)
     start = _position_of(train_end) + 5
-    latecomer = _ohlcv(start, 5800 - start, seed=21)  # runs to the same recent end
+    latecomer = _ohlcv(start, 14000 - start, seed=21)  # runs to the same recent end
 
     frames = split_by_cutoffs(latecomer, train_end, validation_end)
     assert frames["train"].empty

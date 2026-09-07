@@ -202,6 +202,7 @@ class TaskController:
                 category,
                 swing_threshold=parameters["swing_threshold"],
                 lookforward_periods=parameters["swing_window"],
+                min_hold_periods=parameters["min_hold"],
                 rf_estimators=parameters["rf_estimators"],
                 xgb_learning_rate=parameters["learning_rate"],
                 xgb_max_depth=parameters["max_depth"],

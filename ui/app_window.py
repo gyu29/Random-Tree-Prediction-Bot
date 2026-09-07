@@ -407,6 +407,7 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
         parameters = {
             "swing_threshold": page.swing_threshold.value() / 100,
             "swing_window": page.swing_window.value(),
+            "min_hold": page.min_hold.value(),
             "rf_estimators": page.rf_estimators.value(),
             "learning_rate": page.learning_rate.value(),
             "max_depth": page.max_depth.value(),

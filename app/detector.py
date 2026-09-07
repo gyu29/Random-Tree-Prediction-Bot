@@ -7,6 +7,7 @@ from app.config import (
     CATEGORIES_FAILING_VALIDATION,
     DEFAULT_DECISION_THRESHOLD,
     DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_MIN_HOLD_PERIODS,
     DEFAULT_SWING_THRESHOLD,
 )
 from app.indicators import TechnicalIndicators
@@ -78,6 +79,7 @@ class SwingTradeDetector:
         self.swing_threshold = DEFAULT_SWING_THRESHOLD
         self.effective_swing_threshold = effective_threshold(DEFAULT_SWING_THRESHOLD)
         self.lookforward_periods = DEFAULT_LOOKFORWARD_PERIODS
+        self.min_hold_periods = DEFAULT_MIN_HOLD_PERIODS
         self.decision_threshold = DEFAULT_DECISION_THRESHOLD
         self._load_error = None
         self._load()
@@ -101,6 +103,7 @@ class SwingTradeDetector:
             "effective_swing_threshold", effective_threshold(self.swing_threshold)
         )
         self.lookforward_periods = self.training_stats.get("lookforward_periods", DEFAULT_LOOKFORWARD_PERIODS)
+        self.min_hold_periods = self.training_stats.get("min_hold_periods", DEFAULT_MIN_HOLD_PERIODS)
         self.decision_threshold = self.training_stats.get("decision_threshold", DEFAULT_DECISION_THRESHOLD)
         self.uses_market_context = bool(self.training_stats.get("uses_market_context"))
         if hasattr(self.model, "decision_threshold"):
@@ -278,6 +281,11 @@ def simulate_trades(detector, scoring, decision_threshold=None):
     """The threshold-dependent half: walk the scored bars and simulate entries/exits."""
     decision_threshold = detector.decision_threshold if decision_threshold is None else decision_threshold
     lookforward_periods = detector.lookforward_periods
+    # A position is not eligible to exit before the model's minimum hold. Without this a
+    # six-month strategy could be stopped out on day three, which is a different strategy
+    # from the one the labels describe -- the label asks where price is after six months,
+    # so the backtest has to still be holding to find out.
+    min_hold_periods = getattr(detector, "min_hold_periods", 0) or 0
     df = scoring.df
     features = scoring.features
     decision_start, decision_end = scoring.decision_start, scoring.decision_end
@@ -311,12 +319,13 @@ def simulate_trades(detector, scoring, decision_threshold=None):
             days_held = (date - position["entry_date"]).days
             profit = (price - position["entry_price"]) / position["entry_price"]
             reason = None
-            if price <= position["stop_loss"]:
-                reason = "Stop-loss"
-            elif price >= position["take_profit"]:
-                reason = "Take-profit"
-            elif bars_held >= lookforward_periods:
+            if bars_held >= lookforward_periods:
                 reason = "Max time"
+            elif bars_held >= min_hold_periods:
+                if price <= position["stop_loss"]:
+                    reason = "Stop-loss"
+                elif price >= position["take_profit"]:
+                    reason = "Take-profit"
             if reason:
                 trades.append({
                     "entry_date": position["entry_date"], "exit_date": date,

@@ -43,18 +43,37 @@ from app.market_context import fetch_context_series, save_context  # noqa: E402
 from app.config import (  # noqa: E402
     CALENDAR_SPLIT_CUTOFFS,
     DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_MIN_HOLD_PERIODS,
     FACTOR_CATEGORIES,
     TEST_ROOT,
     TRAIN_ROOT,
     VALIDATION_ROOT,
 )
 
+# Kept for reference and for the proportion tests: this is what the split used to be,
+# and what it still lands near for the categories with enough history.
 TRAIN_FRACTION = 0.55
 VALIDATION_FRACTION = 0.15
-# test gets the remaining 0.30 -- unchanged from the original 70/30 split's test share.
-# The fractions now pick *dates* (the quantiles of the category's pooled row calendar)
-# rather than slicing each symbol's own rows, so a category's realized split will land
-# near these proportions without matching them exactly.
+
+# Validation and test are no longer sized as fractions. A fraction was fine at a ten-day
+# horizon and is wrong at a six-to-twelve month one: 15% of a category's calendar came to
+# 336-662 sessions, and at this horizon a window that short yields *zero* completed trades
+# for four of eight categories -- the threshold search had nothing to read. So each
+# evaluation window is now sized by what one has to contain, in sessions:
+#
+#   * FEATURE_WARMUP_PERIODS before any row is scorable at all (the 200-day moving
+#     average is the longest reach in app/indicators.py),
+#   * DEFAULT_LOOKFORWARD_PERIODS so the last entry has somewhere to exit,
+#   * EMBARGO_PERIODS more for validation, which loses its tail to the seam (test has no
+#     seam after it),
+#   * and MIN_BLOCKS_FOR_RESAMPLING whole holding periods on top, because a window
+#     holding fewer than that many non-overlapping year-blocks cannot be resampled --
+#     see scripts/expected_value_thresholds.py, where the bootstrap refuses below it.
+#
+# Every term is an existing constant. None is a free parameter, and none should be turned
+# down to make a category fit: a category that does not fit does not have the history to
+# be evaluated at this horizon, which is a fact about the data, not about the threshold.
+FEATURE_WARMUP_PERIODS = 200
 
 # Rows dropped at each end-of-split boundary. Matches DEFAULT_LOOKFORWARD_PERIODS
 # because that is how far app/labeling.py's swing label reaches forward.
@@ -64,6 +83,36 @@ EMBARGO_PERIODS = DEFAULT_LOOKFORWARD_PERIODS
 # rows to fit on; validation/test need enough to measure anything). Written anyway if
 # non-empty, but reported so the run doesn't look clean when it isn't.
 MIN_USABLE_SPLIT_ROWS = 250
+
+
+def _required_rows_on_disk():
+    """Sessions an evaluation split must still hold *after* its seam embargo.
+
+    What a reader of the written CSVs sees, and so what any check against those files
+    must compare to. _required_sessions below adds validation's embargo back, because a
+    cutoff has to be placed before the rows it removes.
+    """
+    from scripts.expected_value_thresholds import MIN_BLOCKS_FOR_RESAMPLING
+
+    return (FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS
+            + MIN_BLOCKS_FOR_RESAMPLING * DEFAULT_LOOKFORWARD_PERIODS)
+
+
+def _required_sessions():
+    """(train, validation, test) minimum window lengths implied by the horizon."""
+    from scripts.expected_value_thresholds import MIN_BLOCKS_FOR_RESAMPLING
+
+    resample = MIN_BLOCKS_FOR_RESAMPLING * DEFAULT_LOOKFORWARD_PERIODS
+    validation = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + EMBARGO_PERIODS + resample
+    test = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + resample
+    # Train needs to survive its own warm-up, label reach and seam; below that it cannot
+    # produce a labelled row, let alone fit on one.
+    train = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + EMBARGO_PERIODS
+    return train, validation, test
+
+
+class InsufficientHistory(Exception):
+    """A category whose calendar cannot hold train, validation and test at this horizon."""
 
 SPLIT_ROOTS = {"train": TRAIN_ROOT, "validation": VALIDATION_ROOT, "test": TEST_ROOT}
 
@@ -75,26 +124,44 @@ def _safe_filename(ticker):
 def category_cutoffs(histories):
     """The two calendar cutoffs for one category, as (train_end, validation_end).
 
-    Derived from the quantiles of the category's pooled trading days, restricted to
-    the window where the category actually has broad coverage: the median symbol's
-    first date. Without that restriction one long series dominates -- ^GSPC's history
-    reaches back to 1927, and pooling it raw would put market_beta's train cutoff in
-    the early 1980s, before five of its seven symbols exist.
+    Measured backwards from the end of the category's calendar, not as quantiles of it:
+    validation and test are given exactly the sessions _required_sessions says they need,
+    and train receives whatever precedes them. At a ten-day horizon the quantile form and
+    this one agree closely; at six-to-twelve months they do not, because the fixed
+    fractions hand the evaluation windows less than a single completed trade.
 
-    Rows earlier than that common start are not discarded; they sit before the train
-    cutoff either way and stay in train as extra history.
+    The calendar is restricted to the window where the category actually has broad
+    coverage -- the median symbol's first date. Without that restriction one long series
+    dominates: ^GSPC reaches back to 1927, and pooling it raw would put market_beta's
+    train cutoff in the early 1980s, before five of its symbols exist. Rows earlier than
+    that common start are not discarded; they sit before the train cutoff either way and
+    stay in train as extra history.
+
+    Raises InsufficientHistory when the three windows do not fit, rather than returning
+    cutoffs that would produce an evaluation window nothing can be measured in.
     """
     first_dates = sorted(history.index.min() for history in histories.values())
     common_start = first_dates[len(first_dates) // 2]
 
-    pooled = pd.DatetimeIndex(
-        [date for history in histories.values() for date in history.index if date >= common_start]
-    ).sort_values()
-    if pooled.empty:
+    calendar = pd.DatetimeIndex(
+        sorted({date for history in histories.values()
+                for date in history.index if date >= common_start})
+    )
+    if calendar.empty:
         raise ValueError("no rows at or after the category's common start date")
 
-    train_end = pooled[int(len(pooled) * TRAIN_FRACTION)]
-    validation_end = pooled[int(len(pooled) * (TRAIN_FRACTION + VALIDATION_FRACTION))]
+    train_need, validation_need, test_need = _required_sessions()
+    if len(calendar) < train_need + validation_need + test_need:
+        raise InsufficientHistory(
+            f"{len(calendar)} sessions of broad coverage since {common_start.date()}, but a "
+            f"{DEFAULT_MIN_HOLD_PERIODS}-{DEFAULT_LOOKFORWARD_PERIODS} session hold needs "
+            f"{train_need} to train on, {validation_need} to choose a threshold in and "
+            f"{test_need} to test in = {train_need + validation_need + test_need}. Short by "
+            f"{train_need + validation_need + test_need - len(calendar)}"
+        )
+
+    train_end = calendar[-(test_need + validation_need)]
+    validation_end = calendar[-test_need]
     return train_end, validation_end
 
 

@@ -49,6 +49,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.config import DEFAULT_LOOKFORWARD_PERIODS  # noqa: E402
 from app.data_loader import category_test_dir, category_validation_dir, list_categories  # noqa: E402
 from app.detector import SwingTradeDetector, simulate_trades  # noqa: E402
 from app.market_data.alpha_vantage_provider import AlphaVantageProvider  # noqa: E402
@@ -88,8 +89,25 @@ PERMUTATION_SEED = 20260830  # fixed so a threshold is reproducible from the sam
 # holding period. Both the standard error and the critical value are computed by
 # resampling those blocks, which carries whatever correlation the trades actually have
 # instead of assuming none.
-BLOCK_LENGTH_DAYS = 10
+# Follows the holding period: a block has to be long enough that trades in different
+# blocks do not overlap. At the six-to-twelve month horizon that is 252 sessions, which
+# leaves very few blocks per category and a correspondingly blunt test -- an honest
+# consequence of the horizon, not a flaw in the resampling.
+#
+# Measured in CALENDAR days, and converted from sessions here rather than used raw. This
+# was a live defect: the partition below used to advance by 252 *entries in the list of
+# distinct entry dates*, and a category's whole test split holds only 23-107 distinct
+# entry dates at this horizon. Every category therefore collapsed to a single block, every
+# resample drew the identical trades, and the standard error came back 0.0 -- which
+# solve_threshold reads as "skip this candidate" and compare_against_null reads as an edge
+# of zero. Both fail closed, so nothing shipped on it, but neither was measuring anything.
+BLOCK_LENGTH_DAYS = DEFAULT_LOOKFORWARD_PERIODS
+BLOCK_LENGTH_CALENDAR_DAYS = int(round(BLOCK_LENGTH_DAYS * 365 / 252))
 BOOTSTRAP_REPLICATES = 2000
+# Below this many blocks a resample is not a measurement -- with three blocks the
+# bootstrap draws from three distinct outcomes. Callers get NaN and must say so rather
+# than print a standard error they cannot support.
+MIN_BLOCKS_FOR_RESAMPLING = 6
 
 
 def permutation_critical_t(values, probabilities, candidates, standard_errors, blocks,
@@ -118,7 +136,8 @@ def permutation_critical_t(values, probabilities, candidates, standard_errors, b
         permuted = values[rows]
         best = 0.0
         for mask, standard_error in zip(masks, standard_errors):
-            if not standard_error or mask.sum() < minimum_side or (~mask).sum() < minimum_side:
+            if (not np.isfinite(standard_error) or not standard_error
+                    or mask.sum() < minimum_side or (~mask).sum() < minimum_side):
                 continue
             separation = _separation(permuted, mask)
             if np.isfinite(separation):
@@ -166,19 +185,82 @@ def null_trades(detector, scored_data):
             np.asarray(dates)[order])
 
 
-def date_blocks(dates, block_length=BLOCK_LENGTH_DAYS):
-    """Trade indices grouped into blocks of `block_length` consecutive entry dates.
+def _block_index(dates, block_length):
+    """Which calendar block each trade's entry date falls in, counting from the first."""
+    days = np.asarray(dates, dtype="datetime64[D]")
+    return ((days - days.min()).astype(int)) // block_length
 
-    Blocks, not individual dates, because a trade held ten bars overlaps every trade
-    entered during those bars. Resampling single dates would break that dependence and
+
+def date_blocks(dates, block_length=BLOCK_LENGTH_CALENDAR_DAYS):
+    """Trade indices grouped into blocks of `block_length` consecutive calendar days.
+
+    Blocks, not individual dates, because a trade held six months overlaps every trade
+    entered during those months. Resampling single dates would break that dependence and
     understate the variance the same way resampling single trades does.
+
+    Calendar span, not count of distinct entry dates: trades cluster onto a handful of
+    dates, so counting dates makes a "block" cover years of history and collapses the
+    partition to one. See BLOCK_LENGTH_CALENDAR_DAYS.
     """
-    unique = np.unique(dates)
-    by_date = {day: np.flatnonzero(dates == day) for day in unique}
+    if len(dates) == 0:
+        return []
+    index = _block_index(dates, block_length)
+    return [np.flatnonzero(index == b) for b in np.unique(index)]
+
+
+def paired_date_blocks(dates_a, dates_b, block_length=BLOCK_LENGTH_CALENDAR_DAYS):
+    """Calendar blocks carrying the rows *both* samples entered inside them.
+
+    date_blocks above partitions one sample. Comparing the model against its model-off
+    null needs two, and they cannot be partitioned independently: the two runs enter on
+    different dates (the null holds no position open, so it takes more trades), but they
+    are driven by the same price history, so a block that was kind to one was kind to the
+    other. Resampling them separately would treat that shared luck as two independent
+    draws. One partition over the union of both calendars keeps the pairing.
+    """
+    dates_a, dates_b = np.asarray(dates_a, dtype="datetime64[D]"), np.asarray(dates_b, dtype="datetime64[D]")
+    if len(dates_a) == 0 or len(dates_b) == 0:
+        return []
+    origin = min(dates_a.min(), dates_b.min())
+    index_a = ((dates_a - origin).astype(int)) // block_length
+    index_b = ((dates_b - origin).astype(int)) // block_length
     return [
-        np.concatenate([by_date[day] for day in unique[start:start + block_length]])
-        for start in range(0, len(unique), block_length)
+        (np.flatnonzero(index_a == b), np.flatnonzero(index_b == b))
+        for b in np.unique(np.concatenate([index_a, index_b]))
     ]
+
+
+def block_bootstrap_difference_se(values_a, values_b, blocks,
+                                  replicates=BOOTSTRAP_REPLICATES, seed=PERMUTATION_SEED):
+    """Standard error of mean(a) - mean(b), resampling paired date blocks.
+
+    The naive std/sqrt(n) this replaces assumes every trade is an independent draw. At a
+    six-to-twelve month hold that is badly wrong in two directions at once: trades entered
+    within the same year overlap almost entirely, and the model's trades and the null's
+    are two views of the same price path. Both inflate the apparent evidence, so a naive
+    ratio reads "real edge" on differences a block resample cannot separate from zero.
+    """
+    # Blocks where only one side traded contribute no difference, so they cannot support
+    # the estimate however many of them there are. Counting all blocks instead let a model
+    # that took ONE trade against a null's 142 report an edge of +12.75 standard errors:
+    # nearly every replicate dropped for want of a model trade, the few that survived
+    # agreed with each other, and the spread of those survivors was mistaken for precision.
+    usable_blocks = sum(1 for rows_a, rows_b in blocks if len(rows_a) and len(rows_b))
+    if usable_blocks < MIN_BLOCKS_FOR_RESAMPLING:
+        return float("nan")
+    values_a, values_b = np.asarray(values_a, dtype=float), np.asarray(values_b, dtype=float)
+    rng = np.random.default_rng(seed)
+    draws = np.full(replicates, np.nan)
+    for index in range(replicates):
+        picks = rng.integers(0, len(blocks), len(blocks))
+        rows_a = np.concatenate([blocks[i][0] for i in picks]) if len(picks) else np.array([], int)
+        rows_b = np.concatenate([blocks[i][1] for i in picks]) if len(picks) else np.array([], int)
+        # A replicate that drew no trade for one side has no difference to contribute;
+        # counting it as zero would shrink the spread toward a confidence nobody earned.
+        if len(rows_a) and len(rows_b):
+            draws[index] = values_a[rows_a].mean() - values_b[rows_b].mean()
+    usable = draws[~np.isnan(draws)]
+    return float(np.std(usable, ddof=1)) if len(usable) > 1 else float("nan")
 
 
 def _separation(values, mask):
@@ -195,8 +277,10 @@ def block_bootstrap_se(values, mask, blocks, replicates=BOOTSTRAP_REPLICATES, se
     overlapping trades travel together and the spread of the resampled separations
     reflects how much this sample could really have differed.
     """
-    if not blocks or not np.isfinite(_separation(values, mask)):
-        return 0.0
+    if len(blocks) < MIN_BLOCKS_FOR_RESAMPLING or not np.isfinite(_separation(values, mask)):
+        # NaN, not 0.0: a zero standard error reads as perfect precision, and the guard
+        # here fires precisely when precision is what we do not have.
+        return float("nan")
     rng = np.random.default_rng(seed)
     draws = np.empty(replicates)
     for index in range(replicates):
@@ -258,6 +342,14 @@ def solve_threshold(detector, scored_data):
         return None, (f"only {len(usable)} bin(s) reached {MIN_TRADES_PER_BIN} trades -- "
                       f"the marginal curve is not estimable"), curve
 
+    if len(blocks) and len(blocks) < MIN_BLOCKS_FOR_RESAMPLING:
+        span = pd.Timedelta(np.max(dates) - np.min(dates)).days
+        return None, (f"{len(probabilities)} trades span {span} calendar days, which is "
+                      f"{len(blocks)} non-overlapping {BLOCK_LENGTH_CALENDAR_DAYS}-day block(s) -- "
+                      f"fewer than the {MIN_BLOCKS_FOR_RESAMPLING} a resample needs. At a "
+                      f"six-to-twelve month hold this window holds too few independent "
+                      f"outcomes to measure a floor against, whatever the trade count says"), curve
+
     selected = []
     for candidate in reversed(usable):
         if candidate["shrunk_mean"] < 0:
@@ -292,7 +384,7 @@ def solve_threshold(detector, scored_data):
             continue
         mask = probabilities >= candidate
         standard_error = block_bootstrap_se(profits, mask, blocks)
-        if not standard_error:
+        if not np.isfinite(standard_error) or not standard_error:
             continue
         scored_candidates.append({
             "threshold": candidate, "separation": above.mean() - below.mean(),

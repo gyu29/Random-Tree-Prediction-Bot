@@ -43,6 +43,7 @@ from sklearn.preprocessing import StandardScaler
 
 from app.config import (
     DEFAULT_DECISION_THRESHOLD,
+    LABEL_MODE,
     DEFAULT_LOOKFORWARD_PERIODS,
     DEFAULT_MIN_HOLD_PERIODS,
     DEFAULT_SWING_THRESHOLD,
@@ -163,7 +164,8 @@ class SwingTradeTrainer:
                 symbol_frame, market_context=self.market_context
             )
             df_labeled = create_swing_labels(
-                df_features, self.swing_threshold, self.lookforward_periods, self.min_hold_periods
+                df_features, self.swing_threshold, self.lookforward_periods,
+                self.min_hold_periods, mode=LABEL_MODE,
             )
             # Fill gaps against this symbol's own history, before the concat. Filling
             # afterwards lets one symbol supply another's values: a symbol with too
@@ -359,6 +361,7 @@ class SwingTradeTrainer:
             "effective_swing_threshold": effective_threshold(self.swing_threshold),
             "lookforward_periods": self.lookforward_periods,
             "min_hold_periods": self.min_hold_periods,
+            "label_mode": LABEL_MODE,
             "training_samples": len(X_train),
             "validation_samples": len(X_val),
             "embargoed_samples": int(self._embargoed_rows),
@@ -413,5 +416,6 @@ class SwingTradeTrainer:
             "effective_swing_threshold": effective_threshold(self.swing_threshold),
             "lookforward_periods": self.lookforward_periods,
             "min_hold_periods": self.min_hold_periods,
+            "label_mode": LABEL_MODE,
             "scale_pos_weight": self.scale_pos_weight,
         }

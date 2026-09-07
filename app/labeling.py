@@ -40,14 +40,28 @@ def effective_threshold(swing_threshold):
     return max(SWING_THRESHOLD_FLOOR, swing_threshold)
 
 
-def create_swing_labels(df, swing_threshold=0.15, lookforward_periods=10, min_hold_periods=3):
+def create_swing_labels(df, swing_threshold=0.15, lookforward_periods=10, min_hold_periods=3,
+                        mode="peak"):
     """Adds swing_label / swing_profit_potential / swing_risk columns to df.
 
-    For each row i, looks at the window [i + min_hold_periods, i + lookforward_periods]
-    (inclusive) and labels row i a swing opportunity (1) if the maximum high in that
-    window represents at least `effective_threshold(swing_threshold)` upside from the
-    current price. Rows within `lookforward_periods` of the end of the frame don't have
-    a full future window and are left at 0, matching the original implementation.
+    For each row i the exit window is [i + min_hold_periods, i + lookforward_periods],
+    inclusive. Rows without a full future window are left at 0.
+
+    Two ways to ask whether that window was a success:
+
+    "peak"      the maximum high in the window reaches the threshold. Asks "did it ever
+                touch +X%". Correct for a short hold, where touching and exiting are the
+                same act.
+
+    "terminal"  the median close across the window reaches it. Asks "was it up X% when
+                the window closed". Correct for a long hold, where you are still holding
+                at the end and an excursion you did not sell into earned you nothing.
+
+    The distinction is not cosmetic atlong horizons. Over a 126-252 day window the peak of
+    126 daily highs is large for almost any volatile instrument: growth_tech's rows clear
+    +100% on that definition 14.7% of the time, so no threshold below a doubling makes
+    the label describe anything unusual. The median close, rather than the single closing
+    price, is used so the label does not hinge on one arbitrary day.
     """
     df = df.copy()
     price_col = "adj_close" if "adj_close" in df.columns else "close"
@@ -66,10 +80,18 @@ def create_swing_labels(df, swing_threshold=0.15, lookforward_periods=10, min_ho
     future_max_high = shifted_high[::-1].rolling(window=window_size, min_periods=window_size).max()[::-1]
     future_min_low = shifted_low[::-1].rolling(window=window_size, min_periods=window_size).min()[::-1]
 
-    has_full_window = future_max_high.notna()
-    upside_potential = (future_max_high - price) / price
-    downside_risk = (price - future_min_low) / price
+    if mode == "terminal":
+        shifted_close = price.shift(-min_hold_periods)
+        future_close = shifted_close[::-1].rolling(window=window_size, min_periods=window_size).median()[::-1]
+        has_full_window = future_close.notna()
+        upside_potential = (future_close - price) / price
+    elif mode == "peak":
+        has_full_window = future_max_high.notna()
+        upside_potential = (future_max_high - price) / price
+    else:
+        raise ValueError(f"unknown label mode {mode!r}; expected 'peak' or 'terminal'")
 
+    downside_risk = (price - future_min_low) / price
     is_swing = has_full_window & (upside_potential >= threshold)
 
     df["swing_label"] = is_swing.astype(int)

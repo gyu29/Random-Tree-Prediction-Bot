@@ -18,9 +18,30 @@ ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
 ALPHA_VANTAGE_CACHE_TTL_SECONDS = 12 * 60 * 60
 LIVE_MARKET_CACHE_TTL_SECONDS = 15 * 60
 
-DEFAULT_SWING_THRESHOLD = 0.15
-DEFAULT_LOOKFORWARD_PERIODS = 10
-DEFAULT_MIN_HOLD_PERIODS = 3
+# A position is opened and held for between six months and a year: the exit window runs
+# from DEFAULT_MIN_HOLD_PERIODS to DEFAULT_LOOKFORWARD_PERIODS trading days after entry,
+# roughly 126 and 252 sessions.
+#
+# This replaces a 3-to-10 day horizon and is not a parameter change. Two things follow
+# from it and are handled elsewhere in this file and in app/labeling.py:
+#
+#   * Independent observations fall by about 26x. Each row's outcome window now overlaps
+#     the next row's by 99.6% rather than 90%, and across all eight categories the count
+#     of non-overlapping windows goes from 59,739 to 2,285. Independent observations were
+#     already the binding constraint on establishing that any of these models works, so
+#     the significance machinery has far less to go on than before.
+#   * The label had to change shape, not just scale. See LABEL_MODE.
+DEFAULT_SWING_THRESHOLD = 0.25
+DEFAULT_LOOKFORWARD_PERIODS = 126
+DEFAULT_MIN_HOLD_PERIODS = 63
+
+# "terminal": the label asks whether the price was up by the threshold when the exit
+# window closed, measured as the median close across it. "peak" asks whether it ever
+# touched that level, which is the right question for a three-day trade and the wrong one
+# for a six-month hold -- an excursion you were never going to sell into earned you
+# nothing. At this horizon peak labels also stop discriminating: 14.7% of growth_tech's
+# rows touch +100% within a year, so no threshold below a doubling makes the label rare.
+LABEL_MODE = "terminal"
 DEFAULT_DECISION_THRESHOLD = 0.65
 
 DEFAULT_ENV_CONTENT = (
@@ -185,43 +206,33 @@ SYMBOL_TO_CATEGORY = {
 # score before it will pick one. Five of the eight categories have no such peak and keep
 # the value they were trained with; that script's module docstring explains the rule and
 # its output records which categories are which.
+# Recalibrated for the six-to-twelve month horizon and the terminal label. Each is the
+# threshold whose positive rate lands nearest 7%, the midpoint of the 2-8% band the
+# short-horizon labels were held to, so the target is inherited rather than invented.
+# growth_tech needs 90% because its universe carries individual semiconductor names whose
+# annual moves are enormous -- and, being survivor-selected, enormous in one direction.
 CALIBRATED_SWING_THRESHOLDS = {
-    # 3%, not the 5% the other low-volatility categories use: at 5% only 1.78% of
-    # credit_conditions' rows were positive and its calibration slice held six of them,
-    # below app.ensemble.MIN_POSITIVES_FOR_CALIBRATION, so the model could not be
-    # calibrated and was gated for that reason alone. 3% gives a 5.28% positive rate and
-    # 78 calibration positives. See app.labeling.SWING_THRESHOLD_FLOOR.
-    "credit_conditions": 0.03,
-    "rates_recession": 0.05,
-    "inflation_safe_haven": 0.07,
-    "small_cap": 0.08,
-    "international_emerging": 0.09,
-    # 6%, not 8%. Widening the universe changed what these labels describe, and both of
-    # the values below were left over from the seven-ticker era.
-    #
-    # At 8% market_beta's positive rate is 2.90% -- inside the band, but only 31 examples
-    # reach the calibration slice, barely over MIN_POSITIVES_FOR_CALIBRATION and few
-    # enough that the model fell back to a sigmoid fit. 6% gives 6.53% and 221 positives,
-    # enough for isotonic.
-    "market_beta": 0.06,
-    # 20%, not 15%. growth_tech's universe now holds individual semiconductor and
-    # software names alongside the sector funds, and a 15% move inside ten days is
-    # ordinary for them: 8.60% of rows qualified, above the 2-8% band the working
-    # categories sit in, which makes the label describe a common event rather than a
-    # swing. 20% brings it to 4.28%.
-    "growth_tech": 0.20,
+    "credit_conditions": 0.10,       # 4.4% positive
+    "rates_recession": 0.12,         # 5.9%
+    "inflation_safe_haven": 0.15,    # 10.7%
+    "market_beta": 0.15,             # 7.0%
+    "small_cap": 0.20,               # 4.5%
+    "energy_commodity": 0.25,        # 6.1%
+    "international_emerging": 0.25,  # 6.9%
+    "growth_tech": 0.50,             # 9.5%
 }
-# Every category is gated, so none of these decides anything a user acts on. They are the
-# last floors the search produced and are kept so the Backtest page stays reproducible.
+# Floors from scripts/expected_value_thresholds.py, chosen on validation only and each
+# already corrected for the search over candidate floors. Two of eight categories produced
+# one at the three-to-six month horizon; at six-to-twelve months none did, because the
+# evaluation windows could not hold enough non-overlapping holding periods to resample.
+#
+# A category with no entry keeps the threshold it was trained with, which is
+# DEFAULT_DECISION_THRESHOLD and admits almost nothing at these base rates. That is the
+# intended reading of "no defensible floor": the model does not get to trade on a number
+# nobody derived.
 CALIBRATED_DECISION_THRESHOLDS = {
-    "small_cap": 0.0011,
-    "growth_tech": 0.004055,
-    "inflation_safe_haven": 0.006068,
-    "credit_conditions": 0.012977,
-    "international_emerging": 0.015140,
-    "energy_commodity": 0.0429,
-    "rates_recession": 0.3238,
-    "market_beta": 0.371525,
+    "international_emerging": 0.018749,
+    "small_cap": 0.001289,
 }
 
 # Categories whose model must not be presented as a trading signal.
@@ -286,16 +297,31 @@ _NO_ESTABLISHED_EDGE = (
     "Not a trading signal."
 )
 CATEGORIES_FAILING_VALIDATION = {
-    "credit_conditions": _NO_ESTABLISHED_EDGE,
+    "credit_conditions": (
+        "Uncalibrated: too few positives in its calibration slice for its scores to be "
+        "probabilities."
+    ),
     "energy_commodity": _NO_ESTABLISHED_EDGE,
     "growth_tech": _NO_ESTABLISHED_EDGE,
-    "inflation_safe_haven": _NO_ESTABLISHED_EDGE,
-    "international_emerging": _NO_ESTABLISHED_EDGE,
+    "inflation_safe_haven": (
+        "Uncalibrated: its calibration slice holds too few positives, so its scores are not "
+        "probabilities and no marginal-return curve can be read from them."
+    ),
+    "international_emerging": (
+        "Has a derived 1.87% floor -- one of only two -- but out of sample it beats its "
+        "model-off null by +3.14%/trade at +1.71 standard errors, short of the 2 this "
+        "project requires."
+    ),
     "market_beta": _NO_ESTABLISHED_EDGE,
     "rates_recession": _NO_ESTABLISHED_EDGE,
     "small_cap": (
-        "This model's ranking is inverted at the top of its range -- the trades it rates "
-        "highest are the ones that lose money. Its output is not a trading signal."
+        "The strongest result here and still gated. Above its derived 0.13% floor it earns "
+        "+4.61%/trade more than the same entries with the ranking ignored, +2.33 block-"
+        "bootstrap standard errors, out of sample and on a floor chosen from validation "
+        "alone. Two things hold it back: that bar corrects for the search over floors but "
+        "not for having searched eight categories, and at the six-to-twelve month horizon "
+        "this same category ranked its best trades worst. One horizon flipping the sign is "
+        "not a result to trade yet."
     ),
 }
 

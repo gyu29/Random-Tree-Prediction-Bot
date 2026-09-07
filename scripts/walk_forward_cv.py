@@ -65,6 +65,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.config import (  # noqa: E402
     CALIBRATED_SWING_THRESHOLDS,
+    LABEL_MODE,
     DEFAULT_DECISION_THRESHOLD,
     DEFAULT_MIN_HOLD_PERIODS,
     DEFAULT_SWING_THRESHOLD,
@@ -118,6 +119,7 @@ class FoldDetector:
         self.feature_columns = trainer.feature_columns
         self.decision_threshold = decision_threshold
         self.lookforward_periods = trainer.lookforward_periods
+        self.min_hold_periods = trainer.min_hold_periods
         self.effective_swing_threshold = effective_threshold(trainer.swing_threshold)
 
 
@@ -193,7 +195,8 @@ def classification_metrics(detector, validation_frames, swing_threshold, lookfor
     frames = []
     for frame in validation_frames.values():
         features = TechnicalIndicators.create_all_indicators(frame, market_context=context)
-        labeled_frame = create_swing_labels(features, swing_threshold, lookforward, DEFAULT_MIN_HOLD_PERIODS)
+        labeled_frame = create_swing_labels(features, swing_threshold, lookforward,
+                                            DEFAULT_MIN_HOLD_PERIODS, mode=LABEL_MODE)
         # Filled per symbol and forward only, before the concat -- the same discipline as
         # app/trainer.py. A frame-wide fill lets one symbol supply another's missing
         # columns, and a back-fill writes later values into earlier rows.

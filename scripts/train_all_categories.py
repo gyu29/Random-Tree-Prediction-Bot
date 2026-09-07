@@ -46,10 +46,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import model_registry  # noqa: E402
 from app.config import (  # noqa: E402
     CALIBRATED_DECISION_THRESHOLDS,
+    DEFAULT_LOOKFORWARD_PERIODS,
+    DEFAULT_MIN_HOLD_PERIODS,
+    LABEL_MODE,
     CALIBRATED_SWING_THRESHOLDS,
     DEFAULT_SWING_THRESHOLD,
 )
-from app.data_loader import DataProcessor, category_test_dir, list_categories  # noqa: E402
+from app.data_loader import (  # noqa: E402
+    DataProcessor,
+    category_test_dir,
+    category_validation_dir,
+    list_categories,
+)
+from scripts.select_thresholds import load_symbol_data  # noqa: E402
+from scripts.expected_value_thresholds import (  # noqa: E402
+    block_bootstrap_difference_se,
+    paired_date_blocks,
+)
 from app.detector import (  # noqa: E402
     NoModelAvailableError,
     SwingTradeDetector,
@@ -84,7 +97,8 @@ def classification_metrics_on_test_split(category, detector):
             )
             labeled_frame = create_swing_labels(
                 features, detector.swing_threshold, detector.lookforward_periods,
-                detector.training_stats.get("min_hold_periods", 3),
+                detector.training_stats.get("min_hold_periods", DEFAULT_MIN_HOLD_PERIODS),
+                mode=detector.training_stats.get("label_mode", LABEL_MODE),
             )
         # Filled per symbol and forward only, before the concat -- the same discipline as
         # app/trainer.py. A frame-wide fill lets one symbol supply another's missing
@@ -154,6 +168,10 @@ def evaluate_on_test_split(category, detector, decision_threshold=None):
     profits = [t["profit_pct"] for t in all_trades]
     combined = {
         "num_trades": len(all_trades),
+        # Carried for the block bootstrap in compare_against_null, which resamples by
+        # entry date rather than by trade.
+        "profits": np.asarray(profits, dtype=float),
+        "entry_dates": np.asarray([pd.Timestamp(t["entry_date"]).normalize() for t in all_trades]),
         "win_rate": (len([p for p in profits if p > 0]) / len(profits)) if profits else 0.0,
         "avg_profit": float(np.mean(profits)) if profits else 0.0,
         "std_profit": float(np.std(profits, ddof=1)) if len(profits) > 1 else 0.0,
@@ -171,13 +189,30 @@ def evaluate_on_test_split(category, detector, decision_threshold=None):
 def compare_against_null(combined, null_combined):
     """Is the model's edge over "ignore the model" bigger than its own noise?
 
-    Reported in standard errors of the model's own mean: below 1 the difference is
-    indistinguishable from sampling noise, and negative means the ranking actively hurt.
+    Reported in standard errors of the edge, where the standard error comes from a block
+    bootstrap over entry dates -- not from std/sqrt(trades). The naive form counts every
+    trade as an independent observation, and at this horizon they are nothing of the sort:
+    a position held six to twelve months overlaps nearly every other position opened in
+    the same year, and the model's trades and the null's are the same price history read
+    twice. On the current test splits the naive error reports up to +6.5 standard errors
+    for edges the block resample cannot test at all -- the whole out-of-sample window is
+    3 to 6 year-long blocks, below the minimum a resample needs.
+
+    Below 1 the difference is indistinguishable from sampling noise; negative means the
+    ranking actively hurt.
     """
-    trades = combined["num_trades"]
-    standard_error = combined["std_profit"] / np.sqrt(trades) if trades > 1 else float("inf")
     edge = combined["avg_profit"] - null_combined["avg_profit"]
-    ratio = edge / standard_error if standard_error and np.isfinite(standard_error) else 0.0
+    blocks = paired_date_blocks(combined["entry_dates"], null_combined["entry_dates"])
+    standard_error = block_bootstrap_difference_se(
+        combined["profits"], null_combined["profits"], blocks
+    )
+    naive = (combined["std_profit"] / np.sqrt(combined["num_trades"])
+             if combined["num_trades"] > 1 else float("inf"))
+    if not np.isfinite(standard_error) or not standard_error:
+        return {"edge": edge, "standard_error": standard_error, "naive_standard_error": naive,
+                "edge_in_standard_errors": float("nan"),
+                "verdict": "NOT ESTIMABLE -- too few independent date blocks to test this edge"}
+    ratio = edge / standard_error if standard_error else 0.0
     if ratio > 2:
         verdict = "real edge over the null"
     elif ratio > 1:
@@ -186,12 +221,45 @@ def compare_against_null(combined, null_combined):
         verdict = "indistinguishable from ignoring the model"
     else:
         verdict = "WORSE than ignoring the model -- gate this category"
-    return {"edge": edge, "standard_error": standard_error, "edge_in_standard_errors": ratio,
-            "verdict": verdict}
+    return {"edge": edge, "standard_error": standard_error, "naive_standard_error": naive,
+            "edge_in_standard_errors": ratio, "verdict": verdict}
+
+
+class SplitTooShortForHorizon(Exception):
+    """Splits on disk were cut for a shorter hold than the one now configured."""
+
+
+def check_splits_support_horizon(category):
+    """Refuses a category whose evaluation windows cannot hold one completed trade.
+
+    The splits on disk are files, and files outlive the config that produced them. These
+    were cut when a trade lasted ten sessions; a validation window of 336 rows was ample
+    then and cannot contain a single entry-to-exit at six to twelve months, so the
+    threshold search reads zero trades and every downstream number is computed on an empty
+    sample without anything raising. Checked here rather than trusted, because the failure
+    is silent at every other layer.
+    """
+    from scripts.build_factor_datasets import _required_rows_on_disk
+
+    need = _required_rows_on_disk()
+    for name, directory in (
+        ("validation", category_validation_dir(category)),
+        ("test", category_test_dir(category)),
+    ):
+        rows = [len(frame) for frame in load_symbol_data(directory).values()]
+        have = int(np.median(rows)) if rows else 0
+        if have < need:
+            raise SplitTooShortForHorizon(
+                f"{name} split holds {have} sessions for the median symbol; a "
+                f"{DEFAULT_MIN_HOLD_PERIODS}-{DEFAULT_LOOKFORWARD_PERIODS} session hold needs "
+                f"{need}. Re-cut with scripts/build_factor_datasets.py, which now sizes the "
+                f"evaluation windows from the horizon"
+            )
 
 
 def train_and_evaluate_category(system, category):
     print(f"\n{'=' * 70}\n{category}\n{'=' * 70}")
+    check_splits_support_horizon(category)
     swing_threshold = CALIBRATED_SWING_THRESHOLDS.get(category, DEFAULT_SWING_THRESHOLD)
     start = time.time()
     train_result = system.train_model(category, swing_threshold=swing_threshold)
@@ -234,10 +302,24 @@ def train_and_evaluate_category(system, category):
     combined, per_symbol = evaluate_on_test_split(category, detector)
     null_combined, _ = evaluate_on_test_split(category, detector, decision_threshold=0.0)
     null = compare_against_null(combined, null_combined)
+    edge_naive = (null["edge"] / null["naive_standard_error"]
+                  if np.isfinite(null["naive_standard_error"]) and null["naive_standard_error"]
+                  else float("nan"))
     print(f"Model-off null (same entries/exits, ranking ignored): {null_combined['num_trades']} trades, "
           f"win_rate={null_combined['win_rate']:.1%}, avg_profit={null_combined['avg_profit']:.2%}")
     print(f"  edge over null: {null['edge']:+.2%}/trade "
           f"({null['edge_in_standard_errors']:+.2f} standard errors) -- {null['verdict']}")
+    if np.isfinite(null["standard_error"]) and np.isfinite(null["naive_standard_error"]):
+        print(f"  block-bootstrap SE {null['standard_error']:.2%}/trade vs naive std/sqrt(n) "
+              f"{null['naive_standard_error']:.2%} "
+              f"({null['standard_error'] / null['naive_standard_error']:.1f}x)")
+    elif np.isfinite(null["naive_standard_error"]):
+        print(f"  block-bootstrap SE not estimable; naive std/sqrt(n) would have said "
+              f"{null['naive_standard_error']:.2%}/trade "
+              f"({edge_naive:+.2f} standard errors) -- that number is not evidence")
+    else:
+        print(f"  neither error is defined: {combined['num_trades']} model trade(s) is too "
+              f"few to have a spread at all")
     print(f"Out-of-sample test-split backtest: {combined['num_trades']} trades, "
           f"win_rate={combined['win_rate']:.1%}, avg_profit={combined['avg_profit']:.2%}, "
           f"total_profit={combined['total_profit_equal_weight']:.2f}x one unit staked per trade")
@@ -267,6 +349,7 @@ def train_and_evaluate_category(system, category):
         "test_null_avg_profit": null_combined["avg_profit"],
         "test_edge_over_null": null["edge"],
         "test_edge_std_errors": null["edge_in_standard_errors"],
+        "test_edge_se": null["standard_error"],
         "test_trades": combined["num_trades"],
         "test_win_rate": combined["win_rate"],
         "test_avg_profit": combined["avg_profit"],
