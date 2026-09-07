@@ -33,6 +33,7 @@ from app.ensemble import (  # noqa: E402
     choose_calibration_method,
 )
 from scripts.expected_value_thresholds import (  # noqa: E402
+    BLOCK_LENGTH_CALENDAR_DAYS,
     MIN_TRADES_PER_BIN,
     marginal_ev_curve,
     solve_threshold,
@@ -390,25 +391,84 @@ def test_tz_aware_entry_dates_survive_the_cast_to_calendar_days():
     pd.Timestamp(...).normalize() over tz-aware price frames, which hands numpy an object
     array of Timestamps. numpy will not cast those to datetime64[D] -- today it warns and
     parses anyway, and it is documented to raise instead in a future release, which would
-    take every standard error in this project down with it. The partition must also agree
-    with the naive one, since dropping the offset must not move a trade between blocks."""
+    take every standard error in this project down with it.
+
+    Both partitions have to survive it, and both have to agree with the naive one
+    element for element -- dropping the offset must not move a trade between blocks. The
+    two paired samples are deliberately different sets rather than a set and its prefix:
+    a prefix shares the earliest date, so it cannot catch a paired partition that took
+    its origin from the wrong side.
+    """
     from scripts.expected_value_thresholds import date_blocks, paired_date_blocks
 
-    aware = pd.to_datetime(
+    model = pd.to_datetime(
         ["2010-03-01", "2011-06-01", "2012-09-01", "2013-01-15",
          "2014-07-01", "2015-11-01", "2016-04-01", "2017-08-01"]
     ).tz_localize("UTC")
-    naive = aware.tz_localize(None)
+    # Starts later and ends earlier, so neither sample alone fixes the shared origin.
+    null = pd.to_datetime(
+        ["2010-09-20", "2012-01-05", "2012-11-30", "2014-02-14", "2016-10-03"]
+    ).tz_localize("UTC")
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        blocks = date_blocks(aware.to_numpy())
-        paired = paired_date_blocks(aware.to_numpy(), aware.to_numpy()[:4])
+        blocks = date_blocks(model.to_numpy())
+        paired = paired_date_blocks(model.to_numpy(), null.to_numpy())
 
     assert [block.tolist() for block in blocks] == [
-        block.tolist() for block in date_blocks(naive.to_numpy())
+        block.tolist() for block in date_blocks(model.tz_localize(None).to_numpy())
     ], "dropping the timezone must not repartition the trades"
-    assert len(paired) == len(blocks), "the union of a set and its prefix spans the same blocks"
+
+    naive_paired = paired_date_blocks(
+        model.tz_localize(None).to_numpy(), null.tz_localize(None).to_numpy()
+    )
+    assert [(a.tolist(), b.tolist()) for a, b in paired] == [
+        (a.tolist(), b.tolist()) for a, b in naive_paired
+    ], "the paired partition must not depend on the timezone either"
+
+    # Every trade on both sides lands in exactly one block, and no block holds trades
+    # more than one block-width apart -- the properties the resample actually relies on.
+    assert sorted(np.concatenate([a for a, _ in paired])) == list(range(len(model)))
+    assert sorted(np.concatenate([b for _, b in paired])) == list(range(len(null)))
+    for rows_a, rows_b in paired:
+        days = np.concatenate([
+            model.tz_localize(None).to_numpy()[rows_a],
+            null.tz_localize(None).to_numpy()[rows_b],
+        ]).astype("datetime64[D]")
+        span = int((days.max() - days.min()).astype(int))
+        assert span < BLOCK_LENGTH_CALENDAR_DAYS, f"block spans {span} days"
+
+
+def test_blocks_follow_the_market_calendar_day_not_the_utc_day():
+    """Why _calendar_days drops the offset instead of converting to UTC, which is the
+    obvious way to satisfy numpy and is wrong.
+
+    The reason is narrower than it looks, and worth pinning so nobody "simplifies" it
+    back: a zone with a fixed offset shifts every date by the same amount, so the
+    partition survives conversion untouched (Asia/Tokyo moves all eight dates back a day
+    and changes nothing). It is a DST zone straddling UTC that breaks -- Europe/London
+    sits at +00:00 in winter and +01:00 in summer, so converting midnight to UTC moves
+    only the summer entries to the previous day. That shift is uneven, and an uneven
+    shift moves trades across block boundaries.
+    """
+    from scripts.expected_value_thresholds import date_blocks
+
+    london = pd.date_range("2020-01-01", periods=400, freq="7D", tz="Europe/London").normalize()
+    wall_clock = date_blocks(london.to_numpy())
+
+    with warnings.catch_warnings():          # the pre-fix path, warning and all
+        warnings.simplefilter("ignore", DeprecationWarning)
+        utc_days = np.asarray(list(london), dtype="datetime64[D]")
+    origin = utc_days.min()
+    utc_index = ((utc_days - origin).astype(int)) // BLOCK_LENGTH_CALENDAR_DAYS
+    utc_blocks = [np.flatnonzero(utc_index == b) for b in np.unique(utc_index)]
+
+    assert [b.tolist() for b in wall_clock] != [b.tolist() for b in utc_blocks], (
+        "this fixture is meant to distinguish the two, and no longer does"
+    )
+    offsets = {int(d) for d in (london.tz_localize(None).to_numpy().astype("datetime64[D]")
+                                - utc_days).astype(int)}
+    assert offsets == {0, 1}, f"expected an uneven day shift across DST, got {offsets}"
 
 
 def test_too_few_blocks_reports_no_measurement_rather_than_no_error():
