@@ -17,6 +17,7 @@ must give: a real floor, "no floor helps", and "the ordering is inverted".
 """
 import os
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -382,6 +383,32 @@ def test_blocks_follow_the_calendar_not_the_count_of_entry_dates():
         f"ten dates across nine years must not be one block: got {len(blocks)}"
     )
     assert sum(len(b) for b in blocks) == len(dates), "every trade belongs to exactly one block"
+
+
+def test_tz_aware_entry_dates_survive_the_cast_to_calendar_days():
+    """Real entry dates are timezone-aware: train_all_categories builds them with
+    pd.Timestamp(...).normalize() over tz-aware price frames, which hands numpy an object
+    array of Timestamps. numpy will not cast those to datetime64[D] -- today it warns and
+    parses anyway, and it is documented to raise instead in a future release, which would
+    take every standard error in this project down with it. The partition must also agree
+    with the naive one, since dropping the offset must not move a trade between blocks."""
+    from scripts.expected_value_thresholds import date_blocks, paired_date_blocks
+
+    aware = pd.to_datetime(
+        ["2010-03-01", "2011-06-01", "2012-09-01", "2013-01-15",
+         "2014-07-01", "2015-11-01", "2016-04-01", "2017-08-01"]
+    ).tz_localize("UTC")
+    naive = aware.tz_localize(None)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        blocks = date_blocks(aware.to_numpy())
+        paired = paired_date_blocks(aware.to_numpy(), aware.to_numpy()[:4])
+
+    assert [block.tolist() for block in blocks] == [
+        block.tolist() for block in date_blocks(naive.to_numpy())
+    ], "dropping the timezone must not repartition the trades"
+    assert len(paired) == len(blocks), "the union of a set and its prefix spans the same blocks"
 
 
 def test_too_few_blocks_reports_no_measurement_rather_than_no_error():

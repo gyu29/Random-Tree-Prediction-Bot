@@ -185,9 +185,25 @@ def null_trades(detector, scored_data):
             np.asarray(dates)[order])
 
 
+def _calendar_days(dates):
+    """Entry dates as timezone-naive calendar days.
+
+    numpy cannot cast a timezone-aware datetime to datetime64[D]: it warns today and is
+    documented to raise in a future release, and the offset carries nothing a calendar
+    block needs. Every date in one run comes from the same price history and so shares a
+    timezone; what a block asks is which day a trade was entered on. tz_localize(None)
+    keeps that wall-clock day, where converting to UTC first could move a trade across a
+    block boundary for any series not already quoted in it.
+    """
+    index = pd.DatetimeIndex(dates)
+    if index.tz is not None:
+        index = index.tz_localize(None)
+    return index.to_numpy().astype("datetime64[D]")
+
+
 def _block_index(dates, block_length):
     """Which calendar block each trade's entry date falls in, counting from the first."""
-    days = np.asarray(dates, dtype="datetime64[D]")
+    days = _calendar_days(dates)
     return ((days - days.min()).astype(int)) // block_length
 
 
@@ -218,7 +234,7 @@ def paired_date_blocks(dates_a, dates_b, block_length=BLOCK_LENGTH_CALENDAR_DAYS
     other. Resampling them separately would treat that shared luck as two independent
     draws. One partition over the union of both calendars keeps the pairing.
     """
-    dates_a, dates_b = np.asarray(dates_a, dtype="datetime64[D]"), np.asarray(dates_b, dtype="datetime64[D]")
+    dates_a, dates_b = _calendar_days(dates_a), _calendar_days(dates_b)
     if len(dates_a) == 0 or len(dates_b) == 0:
         return []
     origin = min(dates_a.min(), dates_b.min())
