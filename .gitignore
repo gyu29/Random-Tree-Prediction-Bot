@@ -25,6 +25,9 @@ trading_ui_config.json
 CLAUDE.MD
 .claude/
 
+# Editor config, machine-local (interpreter paths point at one developer's box)
+.vscode/
+
 
 # Cached market context series (rebuild with scripts/build_factor_datasets.py)
 /market_context.csv
