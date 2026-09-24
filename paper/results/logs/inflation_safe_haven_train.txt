@@ -1,0 +1,20 @@
+Training dataset shape: (26907, 102) (13 market-context features)
+Swing opportunities: 1762 out of 26907 samples (6.55%)
+Internal split: 15972 fit rows, 3868 calibration rows, 4043 report rows, 3024 embargoed (126 per boundary per symbol)
+Computed scale_pos_weight=10.376 from actual training label ratio
+WARNING: not calibrated -- the calibration slice had no positive labels. Probabilities are raw scores and are not comparable across categories.
+Expected calibration error on the report slice: 0.0436 (0 = predicted probabilities match observed frequencies)
+Validation PR-AUC: 0.2762  (base rate 6.33%, which is what a random ranker scores -- 4.4x lift)
+Validation ROC-AUC: 0.7610  |  precision: 0.7647  |  recall: 0.1016  (at decision_threshold=0.65)
+Validation accuracy: 0.9411 vs. 0.9367 for always-negative -- BEATS the baseline. Train accuracy: 0.9994
+              precision    recall  f1-score   support
+
+           0       0.94      1.00      0.97      3787
+           1       0.76      0.10      0.18       256
+
+    accuracy                           0.94      4043
+   macro avg       0.85      0.55      0.57      4043
+weighted avg       0.93      0.94      0.92      4043
+
+[[3779    8]
+ [ 230   26]]

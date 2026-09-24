@@ -1,0 +1,21 @@
+WARNING: FALN, HYLB contributed no usable rows -- too little history to compute every feature. Excluded from training.
+Training dataset shape: (35024, 102) (13 market-context features)
+Swing opportunities: 1855 out of 35024 samples (5.30%)
+Internal split: 20483 fit rows, 4618 calibration rows, 5261 report rows, 4662 embargoed (126 per boundary per symbol)
+Computed scale_pos_weight=12.458 from actual training label ratio
+WARNING: not calibrated -- the calibration slice had no positive labels. Probabilities are raw scores and are not comparable across categories.
+Expected calibration error on the report slice: 0.0181 (0 = predicted probabilities match observed frequencies)
+Validation PR-AUC: 0.2709  (base rate 3.59%, which is what a random ranker scores -- 7.5x lift)
+Validation ROC-AUC: 0.8590  |  precision: 1.0000  |  recall: 0.0212  (at decision_threshold=0.65)
+Validation accuracy: 0.9648 vs. 0.9641 for always-negative -- BEATS the baseline. Train accuracy: 0.9979
+              precision    recall  f1-score   support
+
+           0       0.96      1.00      0.98      5072
+           1       1.00      0.02      0.04       189
+
+    accuracy                           0.96      5261
+   macro avg       0.98      0.51      0.51      5261
+weighted avg       0.97      0.96      0.95      5261
+
+[[5072    0]
+ [ 185    4]]

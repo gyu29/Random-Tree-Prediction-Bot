@@ -1,0 +1,9 @@
+category,validation_trades,entry_dates,date_blocks,candidates,best_floor,separation,block_se,naive_se,t,bar,floor,floor_in_config
+credit_conditions,,,,0,,,,,,,,
+energy_commodity,174.0,104.0,6.0,0,,,,,,,,
+growth_tech,181.0,59.0,6.0,0,,,,,,,,
+inflation_safe_haven,,,,0,,,,,,,,
+international_emerging,197.0,75.0,6.0,2,0.018749043597577356,0.08689591348106745,0.028896527940254522,0.027333721107552018,3.0071402924507225,2.5974036668964295,0.018749043597577356,0.018749
+market_beta,180.0,79.0,6.0,0,,,,,,,,
+rates_recession,105.0,45.0,6.0,0,,,,,,,,
+small_cap,119.0,27.0,6.0,1,0.001288659793814433,0.158007685541081,0.057443793186129986,0.019021371247949136,2.750648534457027,2.530680279857759,0.001288659793814433,0.001289

@@ -1,0 +1,92 @@
+{
+ "started_at": "2026-09-24T11:39:57.589768+00:00",
+ "command": "python3.11 scripts/paper_run.py --require-clean",
+ "git_commit": "98be62a8e7b8b0f460d4a05e394d43916697818b",
+ "git_dirty": false,
+ "git_changed_files": [],
+ "python": "3.11.3",
+ "platform": "macOS-26.5.1-arm64-arm-64bit",
+ "libraries": {
+  "numpy": "1.26.4",
+  "pandas": "2.0.3",
+  "scikit-learn": "1.4.2",
+  "xgboost": "3.2.0",
+  "joblib": "1.3.2",
+  "ta": "0.11.0",
+  "matplotlib": "3.8.2"
+ },
+ "seeds": {
+  "random_forest": 42,
+  "xgboost": 42,
+  "permutation_and_bootstrap": 20260830
+ },
+ "settings": {
+  "label_mode": "terminal",
+  "min_hold_periods": 63,
+  "lookforward_periods": 126,
+  "block_length_calendar_days": 182,
+  "bootstrap_replicates": 2000,
+  "permutations": 2000,
+  "min_blocks_for_resampling": 6,
+  "project_bar_standard_errors": 2.0,
+  "family_alpha_two_sided": 0.05,
+  "swing_thresholds": {
+   "credit_conditions": 0.1,
+   "energy_commodity": 0.25,
+   "growth_tech": 0.5,
+   "inflation_safe_haven": 0.15,
+   "international_emerging": 0.25,
+   "market_beta": 0.15,
+   "rates_recession": 0.12,
+   "small_cap": 0.2
+  }
+ },
+ "data_manifest_sha256": "7c37520fd8830da1bac74b7089044dd0561ef7aa325a362130ed3d3472a6fc87",
+ "data_cutoffs": {
+  "credit_conditions": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "energy_commodity": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "growth_tech": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "inflation_safe_haven": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "international_emerging": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "market_beta": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "rates_recession": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  },
+  "small_cap": {
+   "test_start": "2022-05-12",
+   "validation_start": "2017-07-26"
+  }
+ },
+ "finished_at": "2026-09-24T11:56:46.815380+00:00",
+ "categories": [
+  "credit_conditions",
+  "energy_commodity",
+  "growth_tech",
+  "inflation_safe_haven",
+  "international_emerging",
+  "market_beta",
+  "rates_recession",
+  "small_cap"
+ ],
+ "cross_validation_folds": 5,
+ "bonferroni_bar": 2.734368786533181
+}
