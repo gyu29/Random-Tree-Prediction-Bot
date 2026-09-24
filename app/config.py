@@ -18,18 +18,20 @@ ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
 ALPHA_VANTAGE_CACHE_TTL_SECONDS = 12 * 60 * 60
 LIVE_MARKET_CACHE_TTL_SECONDS = 15 * 60
 
-# A position is opened and held for between six months and a year: the exit window runs
+# A position is opened and held for between three and six months: the exit window runs
 # from DEFAULT_MIN_HOLD_PERIODS to DEFAULT_LOOKFORWARD_PERIODS trading days after entry,
-# roughly 126 and 252 sessions.
+# roughly 63 and 126 sessions.
 #
-# This replaces a 3-to-10 day horizon and is not a parameter change. Two things follow
-# from it and are handled elsewhere in this file and in app/labeling.py:
+# This replaces a 3-to-10 day horizon and is not a parameter change. A six-to-twelve month
+# hold (126 to 252) was measured first and rejected: credit_conditions and rates_recession
+# cannot be divided into training, threshold selection and testing at that length, and of
+# the six that survived, none produced a decision floor. Two things follow from the horizon
+# and are handled elsewhere in this file and in app/labeling.py:
 #
-#   * Independent observations fall by about 26x. Each row's outcome window now overlaps
-#     the next row's by 99.6% rather than 90%, and across all eight categories the count
-#     of non-overlapping windows goes from 59,739 to 2,285. Independent observations were
-#     already the binding constraint on establishing that any of these models works, so
-#     the significance machinery has far less to go on than before.
+#   * Independent observations fall by about 12.6x, in proportion to the horizon. Each
+#     row's outcome window now overlaps the next row's by 99.2% rather than 90%.
+#     Independent observations were already the binding constraint on establishing that
+#     any of these models works, so the significance machinery has far less to go on.
 #   * The label had to change shape, not just scale. See LABEL_MODE.
 DEFAULT_SWING_THRESHOLD = 0.25
 DEFAULT_LOOKFORWARD_PERIODS = 126
@@ -38,9 +40,11 @@ DEFAULT_MIN_HOLD_PERIODS = 63
 # "terminal": the label asks whether the price was up by the threshold when the exit
 # window closed, measured as the median close across it. "peak" asks whether it ever
 # touched that level, which is the right question for a three-day trade and the wrong one
-# for a six-month hold -- an excursion you were never going to sell into earned you
-# nothing. At this horizon peak labels also stop discriminating: 14.7% of growth_tech's
-# rows touch +100% within a year, so no threshold below a doubling makes the label rare.
+# for a hold of months -- an excursion you were never going to sell into earned you
+# nothing. Peak also inflates the positive rate at any given threshold, since the maximum
+# of dozens of daily highs clears a bar the median close does not; that is the second
+# reason terminal is the mode in use. Per-category positive rates are recorded beside
+# SWING_THRESHOLDS.
 LABEL_MODE = "terminal"
 DEFAULT_DECISION_THRESHOLD = 0.65
 
@@ -237,8 +241,13 @@ CALIBRATED_DECISION_THRESHOLDS = {
 
 # Categories whose model must not be presented as a trading signal.
 #
-# All eight, as of 2026-08-30. None of them survives a significance test that treats
-# trades as the correlated observations they are.
+# All eight, at the 63-to-126 session horizon, as of 2026-09-07. None of them survives a
+# significance test that treats trades as the correlated observations they are. Six
+# calibrate; credit_conditions and inflation_safe_haven do not, so their scores are not
+# probabilities at all. Two produce a derived decision floor -- see
+# CALIBRATED_DECISION_THRESHOLDS -- and both stay gated anyway. The per-category reasons
+# in the dict below are the current verdict: where they disagree with the table further
+# down, they win.
 #
 # The test is scripts/expected_value_thresholds.py: with calibrated probabilities, find a
 # probability floor above which trades demonstrably out-earn those below it. What changed
@@ -247,7 +256,13 @@ CALIBRATED_DECISION_THRESHOLDS = {
 # They are not. Two or three fire on the same day across correlated symbols -- measured
 # within-date correlation runs 0.09 to 0.46 -- and each is held up to lookforward_periods
 # bars, overlapping every trade entered during them. Resampling blocks of consecutive
-# entry dates instead widens the standard errors by 1.6x to 4.4x, and nothing is left:
+# entry dates instead widens the standard errors by 1.6x to 4.4x, and nothing is left.
+#
+# The table below is the last full cross-category run, measured at the 3-to-10 day horizon
+# this project used until 2026-09-07. It is kept because it is what established that the
+# standard error, and not the models, was the problem. Its rows are not a current reading:
+# small_cap and international_emerging have both since produced a floor at 63 to 126, which
+# is the opposite of the inverted top band recorded for small_cap here.
 #
 #   category                separation    t     bar
 #   growth_tech               +1.70%     2.09   2.17

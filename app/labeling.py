@@ -57,10 +57,12 @@ def create_swing_labels(df, swing_threshold=0.15, lookforward_periods=10, min_ho
                 the window closed". Correct for a long hold, where you are still holding
                 at the end and an excursion you did not sell into earned you nothing.
 
-    The distinction is not cosmetic atlong horizons. Over a 126-252 day window the peak of
-    126 daily highs is large for almost any volatile instrument: growth_tech's rows clear
-    +100% on that definition 14.7% of the time, so no threshold below a doubling makes
-    the label describe anything unusual. The median close, rather than the single closing
+    The distinction is not cosmetic at long horizons. Over a window of months the peak of
+    dozens of daily highs is large for almost any volatile instrument, so peak clears a
+    threshold the median close does not and reports far more positives at the same bar.
+    How much more depends on the window, and steeply: the "+100% within a year" figure
+    this docstring used to quote was measured over a 126-252 session window and does not
+    carry to the 63-126 one in use. The median close, rather than the single closing
     price, is used so the label does not hinge on one arbitrary day.
     """
     df = df.copy()

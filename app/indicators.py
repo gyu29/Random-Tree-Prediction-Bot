@@ -132,7 +132,6 @@ class TechnicalIndicators:
             df["macd_signal"] = macd_12_26.macd_signal()
             df["macd_histogram"] = macd_12_26.macd_diff()
             df["macd_crossover"] = (df["macd"] > df["macd_signal"]).astype(int)
-            # MACD is a difference of two price EMAs, so it inherits the price scale.
             df["macd_pct"] = df["macd"] / df[price_col]
             df["macd_signal_pct"] = df["macd_signal"] / df[price_col]
             df["macd_histogram_pct"] = df["macd_histogram"] / df[price_col]
