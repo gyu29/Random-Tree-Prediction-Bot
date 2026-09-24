@@ -98,16 +98,23 @@ def _required_rows_on_disk():
             + MIN_BLOCKS_FOR_RESAMPLING * DEFAULT_LOOKFORWARD_PERIODS)
 
 
-def _required_sessions():
-    """(train, validation, test) minimum window lengths implied by the horizon."""
+def _required_sessions(lookforward_periods=DEFAULT_LOOKFORWARD_PERIODS):
+    """(train, validation, test) minimum window lengths implied by the horizon.
+
+    lookforward_periods defaults to the configured horizon. Passing another one asks what
+    the same rule would demand at that horizon -- scripts/paper_run.py uses it to compare
+    horizons without re-cutting any data. The embargo scales with it, as EMBARGO_PERIODS
+    does with the configured one.
+    """
     from scripts.expected_value_thresholds import MIN_BLOCKS_FOR_RESAMPLING
 
-    resample = MIN_BLOCKS_FOR_RESAMPLING * DEFAULT_LOOKFORWARD_PERIODS
-    validation = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + EMBARGO_PERIODS + resample
-    test = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + resample
+    embargo = lookforward_periods
+    resample = MIN_BLOCKS_FOR_RESAMPLING * lookforward_periods
+    validation = FEATURE_WARMUP_PERIODS + lookforward_periods + embargo + resample
+    test = FEATURE_WARMUP_PERIODS + lookforward_periods + resample
     # Train needs to survive its own warm-up, label reach and seam; below that it cannot
     # produce a labelled row, let alone fit on one.
-    train = FEATURE_WARMUP_PERIODS + DEFAULT_LOOKFORWARD_PERIODS + EMBARGO_PERIODS
+    train = FEATURE_WARMUP_PERIODS + lookforward_periods + embargo
     return train, validation, test
 
 

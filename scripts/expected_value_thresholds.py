@@ -338,7 +338,7 @@ def marginal_ev_curve(probabilities, profits, bins=PROBABILITY_BINS):
     return curve
 
 
-def solve_threshold(detector, scored_data):
+def solve_threshold(detector, scored_data, details=None):
     """The lowest entry probability from which every higher bin is non-negative.
 
     Walks the curve from the top down and stops at the first bin that fails, so the
@@ -346,10 +346,18 @@ def solve_threshold(detector, scored_data):
     floor that admits a bad bin above it is not one.
 
     Returns (threshold, note, curve). threshold is None when no such region exists.
+
+    `details`, if given, is a dict filled with the numbers behind the note -- trade and
+    block counts, every scored candidate, the best one and the bar it had to clear -- for
+    callers that report them (scripts/paper_run.py). It changes nothing about the decision.
     """
+    details = {} if details is None else details
     probabilities, profits, dates = null_trades(detector, scored_data)
     blocks = date_blocks(dates)
     curve = marginal_ev_curve(probabilities, profits)
+    details.update({"num_trades": len(probabilities), "num_blocks": len(blocks),
+                    "num_entry_dates": len(np.unique(dates)) if len(dates) else 0,
+                    "candidates": [], "best": None, "required_t": None})
     if not curve:
         return None, f"only {len(probabilities)} trades with no threshold -- no curve to estimate", curve
 
@@ -408,6 +416,15 @@ def solve_threshold(detector, scored_data):
             "t": (above.mean() - below.mean()) / standard_error,
             "above": above, "below": below,
         })
+    details["candidates"] = [{
+        "threshold": c["threshold"], "separation": c["separation"],
+        "block_standard_error": c["standard_error"],
+        # What the same separation's error would be if every trade were independent --
+        # reported beside the block error, never used in the decision.
+        "naive_standard_error": float(np.sqrt(c["above"].var(ddof=1) / len(c["above"])
+                                              + c["below"].var(ddof=1) / len(c["below"]))),
+        "t": c["t"], "num_above": len(c["above"]), "num_below": len(c["below"]),
+    } for c in scored_candidates]
     if not scored_candidates:
         return None, (f"no candidate floor leaves {MIN_TRADES_FOR_THRESHOLD} trades on both "
                       f"sides of it"), curve
@@ -417,6 +434,8 @@ def solve_threshold(detector, scored_data):
         profits, probabilities, [c["threshold"] for c in scored_candidates],
         [c["standard_error"] for c in scored_candidates], blocks, MIN_TRADES_FOR_THRESHOLD,
     )
+    details["best"] = next(c for c in details["candidates"] if c["threshold"] == best["threshold"])
+    details["required_t"] = required
     if best["t"] < required:
         return None, (f"the best of {len(scored_candidates)} candidate floors is {best['threshold']:.2%}, "
                       f"where trades above earn {best['separation']:+.2%} more than those below -- "
