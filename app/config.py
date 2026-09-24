@@ -234,9 +234,18 @@ CALIBRATED_SWING_THRESHOLDS = {
 # DEFAULT_DECISION_THRESHOLD and admits almost nothing at these base rates. That is the
 # intended reading of "no defensible floor": the model does not get to trade on a number
 # nobody derived.
+#
+# Copy these at full precision. A floor is a value the calibrated probabilities actually
+# take -- isotonic calibration puts many bars on exactly that value -- so rounding moves it
+# to one side of a plateau and changes which trades it admits. small_cap's floor is 1/776;
+# it was carried here as 0.001289, just above the plateau, which dropped 35 of the 119
+# validation entries it was chosen on and reported +2.33 standard errors out of sample for
+# a rule whose derived form scores +1.34 (paper/results/tables.md, T8).
+# international_emerging's was rounded too, harmlessly: no bar in validation or test falls
+# between 0.018749 and the derived value.
 CALIBRATED_DECISION_THRESHOLDS = {
     "international_emerging": 0.018749,
-    "small_cap": 0.001289,
+    "small_cap": 0.001288659793814433,
 }
 
 # Categories whose model must not be presented as a trading signal.
@@ -330,13 +339,10 @@ CATEGORIES_FAILING_VALIDATION = {
     "market_beta": _NO_ESTABLISHED_EDGE,
     "rates_recession": _NO_ESTABLISHED_EDGE,
     "small_cap": (
-        "The strongest result here and still gated. Above its derived 0.13% floor it earns "
-        "+4.61%/trade more than the same entries with the ranking ignored, +2.33 block-"
-        "bootstrap standard errors, out of sample and on a floor chosen from validation "
-        "alone. Two things hold it back: that bar corrects for the search over floors but "
-        "not for having searched eight categories, and at the six-to-twelve month horizon "
-        "this same category ranked its best trades worst. One horizon flipping the sign is "
-        "not a result to trade yet."
+        "Has a derived 0.13% floor -- one of only two -- but out of sample it beats its "
+        "model-off null by +3.68%/trade at +1.34 standard errors, short of the 2 this "
+        "project requires. At the six-to-twelve month horizon this same category ranked its "
+        "best trades worst."
     ),
 }
 

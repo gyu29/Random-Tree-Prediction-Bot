@@ -518,9 +518,14 @@ def main():
         print("\nCALIBRATED_DECISION_THRESHOLDS = {")
         for result in rows:
             value = result["threshold"] if result["threshold"] is not None else result["deployed"]
-            # 4 decimals: calibrated thresholds are sub-1%, and rounding to 2 would print
-            # 0.0023 as 0.00 -- a value that turns the app into an unconditional trader.
-            print(f'    "{result["category"]}": {value:.4f},'
+            # Full precision, never rounded. A floor is a bin edge, and a bin edge is a value
+            # the calibrated probabilities actually take -- isotonic calibration puts many
+            # bars on exactly that value -- so any rounding moves the floor to one side of a
+            # plateau and changes which trades it admits. Rounding to 4 decimals printed
+            # small_cap's 1/776 as 0.0013; the 0.001289 hand-copied from it sat just above
+            # the plateau and excluded 35 of the 119 validation entries the floor was chosen
+            # on, turning a +1.34 standard-error result into a reported +2.33.
+            print(f'    "{result["category"]}": {value!r},'
                   + ("" if result["threshold"] is not None else "  # unchanged: no threshold found"))
         print("}")
 
