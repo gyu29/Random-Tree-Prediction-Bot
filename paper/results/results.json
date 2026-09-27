@@ -15,8 +15,19 @@
    "test_rows": 23804,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.5777411537247903,
+   "kish_signed_daily": 1.675225006912523,
+   "kish_abs_daily": 1.675225006912523,
+   "participation_daily": 2.4727888174453683,
+   "kish_abs_126": 1.6669959810470691,
    "effective_series": 1.675225006912523,
+   "mean_pairwise_correlation": 0.5777411537247903,
+   "mean_abs_correlation": 0.5777411537247903,
+   "mean_squared_correlation": 0.3760398755482531,
+   "mean_abs_correlation_126": 0.5808282069214341,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 462,
+   "pairs_126": 342,
+   "windows_126": 44,
    "leak_per_symbol_split": 0.2349411493191784,
    "leak_calendar_split": 0.0
   },
@@ -35,8 +46,19 @@
    "test_rows": 21640,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.4958698692497738,
+   "kish_signed_daily": 1.9191044661910026,
+   "kish_abs_daily": 1.9191044661910026,
+   "participation_daily": 2.900419450861665,
+   "kish_abs_126": 1.62712935295458,
    "effective_series": 1.9191044661910026,
+   "mean_pairwise_correlation": 0.4958698692497738,
+   "mean_abs_correlation": 0.4958698692497738,
+   "mean_squared_correlation": 0.31029233491434893,
+   "mean_abs_correlation_126": 0.5942939878712592,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 380,
+   "pairs_126": 380,
+   "windows_126": 126,
    "leak_per_symbol_split": 0.1706278245602627,
    "leak_calendar_split": 0.0
   },
@@ -55,8 +77,19 @@
    "test_rows": 29214,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.5378942730921877,
+   "kish_signed_daily": 1.801771609905483,
+   "kish_abs_daily": 1.801771609905483,
+   "participation_daily": 2.9440712129995577,
+   "kish_abs_126": 2.306138567781482,
    "effective_series": 1.801771609905483,
+   "mean_pairwise_correlation": 0.5378942730921877,
+   "mean_abs_correlation": 0.5378942730921877,
+   "mean_squared_correlation": 0.3142682236027104,
+   "mean_abs_correlation_126": 0.41184164495061193,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 702,
+   "pairs_126": 702,
+   "windows_126": 126,
    "leak_per_symbol_split": 0.4968380446468096,
    "leak_calendar_split": 0.0
   },
@@ -75,8 +108,19 @@
    "test_rows": 14066,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
+   "kish_signed_daily": 3.1274538963826948,
+   "kish_abs_daily": 2.345452975148561,
+   "participation_daily": 3.7718861608805043,
+   "kish_abs_126": 1.7977930198059355,
+   "effective_series": 2.345452975148561,
    "mean_pairwise_correlation": 0.2630613280192604,
-   "effective_series": 3.1274538963826948,
+   "mean_abs_correlation": 0.37855328081407463,
+   "mean_squared_correlation": 0.20387929375200836,
+   "mean_abs_correlation_126": 0.519257355026484,
+   "negative_pairs_daily": 24,
+   "pairs_daily": 156,
+   "pairs_126": 132,
+   "windows_126": 42,
    "leak_per_symbol_split": 0.42942276232764665,
    "leak_calendar_split": 0.0
   },
@@ -95,8 +139,19 @@
    "test_rows": 29214,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.6911039503629021,
+   "kish_signed_daily": 1.4233972883432666,
+   "kish_abs_daily": 1.4233972883432666,
+   "participation_daily": 1.952479678935717,
+   "kish_abs_126": 1.4122747401162306,
    "effective_series": 1.4233972883432666,
+   "mean_pairwise_correlation": 0.6911039503629021,
+   "mean_abs_correlation": 0.6911039503629021,
+   "mean_squared_correlation": 0.4934065007631241,
+   "mean_abs_correlation_126": 0.696849735587074,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 702,
+   "pairs_126": 702,
+   "windows_126": 57,
    "leak_per_symbol_split": 0.24747736609101423,
    "leak_calendar_split": 0.0
   },
@@ -115,8 +170,19 @@
    "test_rows": 25968,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.7948051056446729,
+   "kish_signed_daily": 1.2447798710459583,
+   "kish_abs_daily": 1.2447798710459583,
+   "participation_daily": 1.509641458170267,
+   "kish_abs_126": 1.2997353540058945,
    "effective_series": 1.2447798710459583,
+   "mean_pairwise_correlation": 0.7948051056446729,
+   "mean_abs_correlation": 0.7948051056446729,
+   "mean_squared_correlation": 0.6477310691486324,
+   "mean_abs_correlation_126": 0.7593607614386891,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 552,
+   "pairs_126": 420,
+   "windows_126": 193,
    "leak_per_symbol_split": 0.5230348502910034,
    "leak_calendar_split": 0.0
   },
@@ -135,8 +201,19 @@
    "test_rows": 15148,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
+   "kish_signed_daily": 3.6994685120163155,
+   "kish_abs_daily": 1.6784259370355081,
+   "participation_daily": 2.122387976291995,
+   "kish_abs_126": 1.6567202854301286,
+   "effective_series": 1.6784259370355081,
    "mean_pairwise_correlation": 0.21417902961603866,
-   "effective_series": 3.6994685120163155,
+   "mean_abs_correlation": 0.5647037313620561,
+   "mean_squared_correlation": 0.43048795675821994,
+   "mean_abs_correlation_126": 0.5731100556424963,
+   "negative_pairs_daily": 48,
+   "pairs_daily": 182,
+   "pairs_126": 182,
+   "windows_126": 44,
    "leak_per_symbol_split": 0.04514126374493608,
    "leak_calendar_split": 0.0
   },
@@ -155,8 +232,19 @@
    "test_rows": 16230,
    "test_first": "2022-05-12",
    "test_last": "2026-09-03",
-   "mean_pairwise_correlation": 0.9541326659845968,
+   "kish_signed_daily": 1.0447241299126095,
+   "kish_abs_daily": 1.0447241299126095,
+   "participation_daily": 1.0903278200760431,
+   "kish_abs_126": 1.0302295292340087,
    "effective_series": 1.0447241299126095,
+   "mean_pairwise_correlation": 0.9541326659845968,
+   "mean_abs_correlation": 0.9541326659845968,
+   "mean_squared_correlation": 0.9112378814496523,
+   "mean_abs_correlation_126": 0.9685615870996888,
+   "negative_pairs_daily": 0,
+   "pairs_daily": 210,
+   "pairs_126": 210,
+   "windows_126": 74,
    "leak_per_symbol_split": 0.2503250975292588,
    "leak_calendar_split": 0.0
   }
@@ -308,7 +396,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 437,
    "effective_series": 1.675225006912523,
-   "effective_independent_outcomes": 732.0733280207726
+   "effective_independent_outcomes": 732.0733280207726,
+   "outcomes_with_signed_measure": 732.0733280207726
   },
   {
    "category": "credit_conditions",
@@ -318,7 +407,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 34,
    "effective_series": 1.675225006912523,
-   "effective_independent_outcomes": 56.95765023502578
+   "effective_independent_outcomes": 56.95765023502578,
+   "outcomes_with_signed_measure": 56.95765023502578
   },
   {
    "category": "credit_conditions",
@@ -328,7 +418,8 @@
    "fits_three_way_split": false,
    "non_overlapping_holds": 17,
    "effective_series": 1.675225006912523,
-   "effective_independent_outcomes": 28.47882511751289
+   "effective_independent_outcomes": 28.47882511751289,
+   "outcomes_with_signed_measure": 28.47882511751289
   },
   {
    "category": "energy_commodity",
@@ -338,7 +429,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 494,
    "effective_series": 1.9191044661910026,
-   "effective_independent_outcomes": 948.0376062983553
+   "effective_independent_outcomes": 948.0376062983553,
+   "outcomes_with_signed_measure": 948.0376062983553
   },
   {
    "category": "energy_commodity",
@@ -348,7 +440,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 39,
    "effective_series": 1.9191044661910026,
-   "effective_independent_outcomes": 74.8450741814491
+   "effective_independent_outcomes": 74.8450741814491,
+   "outcomes_with_signed_measure": 74.8450741814491
   },
   {
    "category": "energy_commodity",
@@ -358,7 +451,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 19,
    "effective_series": 1.9191044661910026,
-   "effective_independent_outcomes": 36.46298485762905
+   "effective_independent_outcomes": 36.46298485762905,
+   "outcomes_with_signed_measure": 36.46298485762905
   },
   {
    "category": "growth_tech",
@@ -368,7 +462,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 696,
    "effective_series": 1.801771609905483,
-   "effective_independent_outcomes": 1254.0330404942163
+   "effective_independent_outcomes": 1254.0330404942163,
+   "outcomes_with_signed_measure": 1254.0330404942163
   },
   {
    "category": "growth_tech",
@@ -378,7 +473,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 55,
    "effective_series": 1.801771609905483,
-   "effective_independent_outcomes": 99.09743854480156
+   "effective_independent_outcomes": 99.09743854480156,
+   "outcomes_with_signed_measure": 99.09743854480156
   },
   {
    "category": "growth_tech",
@@ -388,7 +484,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 27,
    "effective_series": 1.801771609905483,
-   "effective_independent_outcomes": 48.64783346744804
+   "effective_independent_outcomes": 48.64783346744804,
+   "outcomes_with_signed_measure": 48.64783346744804
   },
   {
    "category": "inflation_safe_haven",
@@ -397,8 +494,9 @@
    "coverage_sessions": 4910,
    "fits_three_way_split": true,
    "non_overlapping_holds": 491,
-   "effective_series": 3.1274538963826948,
-   "effective_independent_outcomes": 1535.5798631239031
+   "effective_series": 2.345452975148561,
+   "effective_independent_outcomes": 1151.6174107979434,
+   "outcomes_with_signed_measure": 1535.5798631239031
   },
   {
    "category": "inflation_safe_haven",
@@ -407,8 +505,9 @@
    "coverage_sessions": 4910,
    "fits_three_way_split": true,
    "non_overlapping_holds": 38,
-   "effective_series": 3.1274538963826948,
-   "effective_independent_outcomes": 118.8432480625424
+   "effective_series": 2.345452975148561,
+   "effective_independent_outcomes": 89.12721305564531,
+   "outcomes_with_signed_measure": 118.8432480625424
   },
   {
    "category": "inflation_safe_haven",
@@ -417,8 +516,9 @@
    "coverage_sessions": 4910,
    "fits_three_way_split": true,
    "non_overlapping_holds": 19,
-   "effective_series": 3.1274538963826948,
-   "effective_independent_outcomes": 59.4216240312712
+   "effective_series": 2.345452975148561,
+   "effective_independent_outcomes": 44.56360652782266,
+   "outcomes_with_signed_measure": 59.4216240312712
   },
   {
    "category": "international_emerging",
@@ -428,7 +528,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 661,
    "effective_series": 1.4233972883432666,
-   "effective_independent_outcomes": 940.8656075948992
+   "effective_independent_outcomes": 940.8656075948992,
+   "outcomes_with_signed_measure": 940.8656075948992
   },
   {
    "category": "international_emerging",
@@ -438,7 +539,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 52,
    "effective_series": 1.4233972883432666,
-   "effective_independent_outcomes": 74.01665899384986
+   "effective_independent_outcomes": 74.01665899384986,
+   "outcomes_with_signed_measure": 74.01665899384986
   },
   {
    "category": "international_emerging",
@@ -448,7 +550,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 26,
    "effective_series": 1.4233972883432666,
-   "effective_independent_outcomes": 37.00832949692493
+   "effective_independent_outcomes": 37.00832949692493,
+   "outcomes_with_signed_measure": 37.00832949692493
   },
   {
    "category": "market_beta",
@@ -458,7 +561,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 650,
    "effective_series": 1.2447798710459583,
-   "effective_independent_outcomes": 809.1069161798729
+   "effective_independent_outcomes": 809.1069161798729,
+   "outcomes_with_signed_measure": 809.1069161798729
   },
   {
    "category": "market_beta",
@@ -468,7 +572,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 51,
    "effective_series": 1.2447798710459583,
-   "effective_independent_outcomes": 63.48377342334388
+   "effective_independent_outcomes": 63.48377342334388,
+   "outcomes_with_signed_measure": 63.48377342334388
   },
   {
    "category": "market_beta",
@@ -478,7 +583,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 25,
    "effective_series": 1.2447798710459583,
-   "effective_independent_outcomes": 31.119496776148956
+   "effective_independent_outcomes": 31.119496776148956,
+   "outcomes_with_signed_measure": 31.119496776148956
   },
   {
    "category": "rates_recession",
@@ -487,8 +593,9 @@
    "coverage_sessions": 4680,
    "fits_three_way_split": true,
    "non_overlapping_holds": 468,
-   "effective_series": 3.6994685120163155,
-   "effective_independent_outcomes": 1731.3512636236358
+   "effective_series": 1.6784259370355081,
+   "effective_independent_outcomes": 785.5033385326178,
+   "outcomes_with_signed_measure": 1731.3512636236358
   },
   {
    "category": "rates_recession",
@@ -497,8 +604,9 @@
    "coverage_sessions": 4680,
    "fits_three_way_split": true,
    "non_overlapping_holds": 37,
-   "effective_series": 3.6994685120163155,
-   "effective_independent_outcomes": 136.88033494460367
+   "effective_series": 1.6784259370355081,
+   "effective_independent_outcomes": 62.101759670313804,
+   "outcomes_with_signed_measure": 136.88033494460367
   },
   {
    "category": "rates_recession",
@@ -507,8 +615,9 @@
    "coverage_sessions": 4680,
    "fits_three_way_split": false,
    "non_overlapping_holds": 18,
-   "effective_series": 3.6994685120163155,
-   "effective_independent_outcomes": 66.59043321629368
+   "effective_series": 1.6784259370355081,
+   "effective_independent_outcomes": 30.211666866639145,
+   "outcomes_with_signed_measure": 66.59043321629368
   },
   {
    "category": "small_cap",
@@ -518,7 +627,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 651,
    "effective_series": 1.0447241299126095,
-   "effective_independent_outcomes": 680.1154085731088
+   "effective_independent_outcomes": 680.1154085731088,
+   "outcomes_with_signed_measure": 680.1154085731088
   },
   {
    "category": "small_cap",
@@ -528,7 +638,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 51,
    "effective_series": 1.0447241299126095,
-   "effective_independent_outcomes": 53.280930625543085
+   "effective_independent_outcomes": 53.280930625543085,
+   "outcomes_with_signed_measure": 53.280930625543085
   },
   {
    "category": "small_cap",
@@ -538,7 +649,8 @@
    "fits_three_way_split": true,
    "non_overlapping_holds": 25,
    "effective_series": 1.0447241299126095,
-   "effective_independent_outcomes": 26.118103247815238
+   "effective_independent_outcomes": 26.118103247815238,
+   "outcomes_with_signed_measure": 26.118103247815238
   }
  ],
  "categories": [
@@ -662,7 +774,7 @@
      "roc_auc": 0.8666688286446611
     }
    ],
-   "seconds": 73.0
+   "seconds": 72.0
   },
   {
    "category": "energy_commodity",
@@ -674,7 +786,7 @@
    "internal_ece": 0.05009563581401229,
    "internal_pr_auc": 0.33559986502124606,
    "internal_base_rate": 0.06831252630102398,
-   "reproduction_gap": 3.608224830031759e-16,
+   "reproduction_gap": 4.440892098500626e-16,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 0 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -699,7 +811,7 @@
     },
     {
      "lower": 0.0025566658200597845,
-     "upper": 0.003152716061788947,
+     "upper": 0.003152716061788948,
      "num_trades": 22,
      "mean_profit": 0.06392829239390639,
      "standard_error": 0.04939851996866594,
@@ -708,7 +820,7 @@
      "block_standard_error": 0.10157997722646211
     },
     {
-     "lower": 0.003152716061788947,
+     "lower": 0.003152716061788948,
      "upper": 0.004251675875198257,
      "num_trades": 21,
      "mean_profit": 0.04334308005344355,
@@ -729,7 +841,7 @@
     },
     {
      "lower": 0.007979904524649556,
-     "upper": 0.016032761810323985,
+     "upper": 0.016032761810323974,
      "num_trades": 22,
      "mean_profit": -0.03147143550885279,
      "standard_error": 0.04551055058923885,
@@ -738,8 +850,8 @@
      "block_standard_error": 0.03582696936770754
     },
     {
-     "lower": 0.016032761810323985,
-     "upper": 0.0316191566360312,
+     "lower": 0.016032761810323974,
+     "upper": 0.03161915663603118,
      "num_trades": 21,
      "mean_profit": -0.08252338547334179,
      "standard_error": 0.0526216649813442,
@@ -748,7 +860,7 @@
      "block_standard_error": 0.05989031020356503
     },
     {
-     "lower": 0.0316191566360312,
+     "lower": 0.03161915663603118,
      "upper": 0.07301659802048859,
      "num_trades": 22,
      "mean_profit": -0.03932024646520356,
@@ -777,12 +889,12 @@
     "ece": 0.1320904715735033,
     "reliability": [
      {
-      "predicted": 0.002115928333254691,
+      "predicted": 0.0021159283332546916,
       "observed": 0.06715425531914894,
       "rows": 1504
      },
      {
-      "predicted": 0.0022775235242609654,
+      "predicted": 0.0022775235242609663,
       "observed": 0.07579787234042554,
       "rows": 1504
      },
@@ -792,12 +904,12 @@
       "rows": 1504
      },
      {
-      "predicted": 0.003711230058272864,
+      "predicted": 0.0037112300582728642,
       "observed": 0.1675531914893617,
       "rows": 1504
      },
      {
-      "predicted": 0.005205819514771304,
+      "predicted": 0.005205819514771305,
       "observed": 0.18218085106382978,
       "rows": 1504
      },
@@ -812,17 +924,17 @@
       "rows": 1504
      },
      {
-      "predicted": 0.014756505127509407,
+      "predicted": 0.014756505127509405,
       "observed": 0.1595744680851064,
       "rows": 1504
      },
      {
-      "predicted": 0.024282316546323797,
+      "predicted": 0.024282316546323787,
       "observed": 0.14295212765957446,
       "rows": 1504
      },
      {
-      "predicted": 0.12454678265395065,
+      "predicted": 0.12454678265395062,
       "observed": 0.16356382978723405,
       "rows": 1504
      }
@@ -872,7 +984,7 @@
      "roc_auc": 0.7609035492300805
     }
    ],
-   "seconds": 104.8
+   "seconds": 106.5
   },
   {
    "category": "growth_tech",
@@ -881,10 +993,10 @@
    "calibrated": true,
    "calibration_method": "isotonic",
    "calibration_positives": 513,
-   "internal_ece": 0.007640134402583238,
+   "internal_ece": 0.007640134402583235,
    "internal_pr_auc": 0.16048865394040324,
    "internal_base_rate": 0.021656866740408686,
-   "reproduction_gap": 2.3828161666017422e-14,
+   "reproduction_gap": 5.953570969552402e-14,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 1 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -1017,7 +1129,7 @@
       "rows": 1880
      },
      {
-      "predicted": 0.02458992418628335,
+      "predicted": 0.024589924186283342,
       "observed": 0.09681372549019608,
       "rows": 1632
      },
@@ -1032,7 +1144,7 @@
       "rows": 2359
      },
      {
-      "predicted": 0.1346708665315416,
+      "predicted": 0.13467086653154162,
       "observed": 0.2791828793774319,
       "rows": 2056
      }
@@ -1082,7 +1194,7 @@
      "roc_auc": 0.8629847248433189
     }
    ],
-   "seconds": 231.1
+   "seconds": 237.4
   },
   {
    "category": "inflation_safe_haven",
@@ -1091,7 +1203,7 @@
    "calibrated": false,
    "calibration_method": null,
    "calibration_positives": 0,
-   "internal_ece": 0.04362480996649307,
+   "internal_ece": 0.04362480996649306,
    "internal_pr_auc": 0.27616367828850746,
    "internal_base_rate": 0.06331931733860995,
    "reproduction_gap": 2.220446049250313e-16,
@@ -1106,7 +1218,7 @@
     "pr_auc": 0.4247198708410616,
     "pr_auc_lift": 2.926047538648498,
     "roc_auc": 0.8260459112189037,
-    "ece": 0.036886359109605374,
+    "ece": 0.03688635910960538,
     "reliability": [
      {
       "predicted": 0.00012650626230292623,
@@ -1134,7 +1246,7 @@
       "rows": 978
      },
      {
-      "predicted": 0.10370502576065889,
+      "predicted": 0.1037050257606589,
       "observed": 0.18609406952965235,
       "rows": 978
      },
@@ -1204,7 +1316,7 @@
      "roc_auc": 0.8437825259387959
     }
    ],
-   "seconds": 59.4
+   "seconds": 60.2
   },
   {
    "category": "international_emerging",
@@ -1216,7 +1328,7 @@
    "internal_ece": 0.0065667559955356865,
    "internal_pr_auc": 0.27939791659770397,
    "internal_base_rate": 0.007492572019118977,
-   "reproduction_gap": 2.9698465908722937e-15,
+   "reproduction_gap": 6.106226635438361e-15,
    "floor": 0.018749043597577356,
    "floor_in_config": 0.018749,
    "floor_note": "floor 1.87%, best of 2 candidates: trades above it earn +9.40% against +0.71% below, a separation of +8.69% at 3.01 standard errors (needed 2.60 after correcting for the search) on 50 trades",
@@ -1386,7 +1498,7 @@
       "rows": 1792
      },
      {
-      "predicted": 0.029405052670570045,
+      "predicted": 0.029405052670570038,
       "observed": 0.10829694323144105,
       "rows": 2290
      }
@@ -1451,7 +1563,7 @@
      "roc_auc": 0.8109297702315318
     }
    ],
-   "seconds": 212.2
+   "seconds": 219.9
   },
   {
    "category": "market_beta",
@@ -1460,10 +1572,10 @@
    "calibrated": true,
    "calibration_method": "isotonic",
    "calibration_positives": 846,
-   "internal_ece": 0.016491761796229135,
+   "internal_ece": 0.016491761796229132,
    "internal_pr_auc": 0.10256003062605405,
    "internal_base_rate": 0.014962355856285142,
-   "reproduction_gap": 2.353672812205332e-14,
+   "reproduction_gap": 4.7128967395337895e-14,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 1 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -1596,7 +1708,7 @@
       "rows": 1594
      },
      {
-      "predicted": 0.03931308865455246,
+      "predicted": 0.03931308865455245,
       "observed": 0.10140028971511347,
       "rows": 2071
      },
@@ -1661,7 +1773,7 @@
      "roc_auc": 0.8848145608242907
     }
    ],
-   "seconds": 153.1
+   "seconds": 152.7
   },
   {
    "category": "rates_recession",
@@ -1670,10 +1782,10 @@
    "calibrated": true,
    "calibration_method": "isotonic",
    "calibration_positives": 181,
-   "internal_ece": 0.006863337571387962,
+   "internal_ece": 0.006863337571387964,
    "internal_pr_auc": 0.1272907710150381,
    "internal_base_rate": 0.0213986322523715,
-   "reproduction_gap": 1.0769163338864018e-14,
+   "reproduction_gap": 6.484396353201305e-15,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 1 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -1731,7 +1843,7 @@
       "rows": 7273
      },
      {
-      "predicted": 0.03244413890691791,
+      "predicted": 0.032444138906917906,
       "observed": 0.11258278145695365,
       "rows": 302
      },
@@ -1791,7 +1903,7 @@
      "roc_auc": 0.8025143753054794
     }
    ],
-   "seconds": 61.5
+   "seconds": 66.0
   },
   {
    "category": "small_cap",
@@ -1805,7 +1917,7 @@
    "internal_base_rate": 0.007665873645255088,
    "reproduction_gap": 7.771561172376096e-15,
    "floor": 0.001288659793814433,
-   "floor_in_config": 0.001289,
+   "floor_in_config": 0.001288659793814433,
    "floor_note": "floor 0.13%, best of 1 candidates: trades above it earn +11.18% against -4.62% below, a separation of +15.80% at 2.75 standard errors (needed 2.53 after correcting for the search) on 73 trades",
    "floor_details": {
     "num_trades": 119,
@@ -1884,17 +1996,17 @@
     "ece": 0.03621279739807965,
     "reliability": [
      {
-      "predicted": 2.677598688378963e-07,
+      "predicted": 2.677598688378392e-07,
       "observed": 0.0008498583569405099,
       "rows": 7060
      },
      {
-      "predicted": 0.0017515432982344176,
+      "predicted": 0.0017515432982344171,
       "observed": 0.04877250409165303,
       "rows": 3055
      },
      {
-      "predicted": 0.014735442222215827,
+      "predicted": 0.014735442222215822,
       "observed": 0.24206008583690988,
       "rows": 1165
      }
@@ -1916,25 +2028,7 @@
     "verdict": "suggestive, not established",
     "p_one_sided": 0.0909092742864877
    },
-   "test_at_config_floor": {
-    "floor": 0.001289,
-    "model_trades": 77,
-    "model_mean": 0.09829087748816659,
-    "model_win_rate": 0.8831168831168831,
-    "model_entry_dates": 31,
-    "null_trades": 90,
-    "null_mean": 0.0522164833595286,
-    "null_win_rate": 0.7777777777777778,
-    "edge": 0.04607439412863799,
-    "block_standard_error": 0.0198017993646167,
-    "naive_standard_error": 0.013097532885829249,
-    "t": 2.3267781518363972,
-    "usable_blocks": 6,
-    "verdict": "real edge over the null",
-    "p_one_sided": 0.009988537912952735,
-    "validation_entries_between": 35,
-    "test_bars_between": 2252
-   },
+   "test_at_config_floor": null,
    "cross_validation": [
     {
      "fold": 1,
@@ -1977,7 +2071,7 @@
      "roc_auc": 0.7868603257362317
     }
    ],
-   "seconds": 105.2
+   "seconds": 107.6
   }
  ]
 }
