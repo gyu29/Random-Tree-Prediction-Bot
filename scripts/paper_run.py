@@ -272,23 +272,100 @@ def full_histories(splits):
 # ------------------------------------------------------------ data-only measurements
 
 
-def effective_series(splits):
-    """n / (1 + (n - 1) * mean pairwise correlation) of daily returns.
+# Effective series is measured four ways, because the one first reported -- Kish's
+# n / (1 + (n - 1) * mean correlation), with the *signed* mean -- rewards a category for
+# holding inverse funds. TBT and TMV are short the Treasuries beside them and UUP moves
+# against the metals, so their correlations are strongly negative, pull the mean down and
+# push the count up, though an inverse fund is the same bet with the sign flipped. The
+# absolute-correlation and participation-ratio measures do not change when a fund's sign
+# is flipped.
+#
+# Which one is the headline was fixed before any of the new measures was computed
+# (2026-09-27), as the most conservative of the three daily measures. That minimum is the
+# absolute-correlation measure by construction, for every category and any data: mean|r|
+# is at least mean r, and mean r^2 is at most mean|r|. So the rule leaves nothing to choose
+# after looking. The six-month measure is reported beside it and never used as it: with
+# 34-55 windows per category its correlations are noisy enough to land anywhere.
+HEADLINE_EFFECTIVE_SERIES = "kish_abs_daily"
+DAILY_EFFECTIVE_SERIES = ("kish_signed_daily", "kish_abs_daily", "participation_daily")
+# Daily pairs need a year of common history, as before. Six-month pairs need ten years of
+# common windows; fewer than that and one pair's correlation is mostly noise.
+MIN_COMMON_DAYS = 250
+MIN_COMMON_WINDOWS = 20
 
-    Returns are taken within each split file and then joined, so no return spans the
-    embargo gap -- one six-month move per symbol would otherwise sit in every covariance.
+
+def _kish(n, mean_correlation):
+    return n / (1 + (n - 1) * mean_correlation)
+
+
+def _period_returns(splits, period):
+    """Per-symbol returns over consecutive, non-overlapping `period`-session windows.
+
+    Taken within each split file and then joined, so no return spans an embargo gap. For
+    period > 1 the windows are cut from the category's own calendar in that split, so every
+    symbol's return in a window covers the same dates and their correlation is meaningful.
     """
     returns = {}
     for frames in splits.values():
+        if not frames:
+            continue
+        calendar = pd.DatetimeIndex(sorted({d for f in frames.values() for d in f.index}))
+        edges = calendar[::period]
         for symbol, frame in frames.items():
-            series = frame["close"].pct_change().dropna()
+            if period == 1:
+                # Exactly the daily returns the first published figures used.
+                series = frame["close"].pct_change().dropna()
+            else:
+                close = frame["close"].reindex(edges)
+                series = (close / close.shift(1) - 1).dropna()
             returns[symbol] = pd.concat([returns[symbol], series]) if symbol in returns else series
-    table = pd.DataFrame({s: r[~r.index.duplicated()] for s, r in returns.items()})
-    correlation = table.corr(min_periods=250).to_numpy()
+    return pd.DataFrame({s: r[~r.index.duplicated()] for s, r in returns.items()})
+
+
+def _off_diagonal(correlation):
     n = correlation.shape[0]
-    off_diagonal = correlation[~np.eye(n, dtype=bool)]
-    mean_correlation = float(np.nanmean(off_diagonal)) if n > 1 else 1.0
-    return n / (1 + (n - 1) * mean_correlation), mean_correlation
+    values = correlation[~np.eye(n, dtype=bool)]
+    return values[np.isfinite(values)]
+
+
+def effective_series(splits, holding_period=DEFAULT_LOOKFORWARD_PERIODS):
+    """Every effective-series measure for one category, with the correlations behind them.
+
+    Participation ratio is the eigenvalue-based effective rank of the correlation matrix,
+    (sum of eigenvalues)^2 / sum of squared eigenvalues. For a correlation matrix that
+    equals n / (1 + (n - 1) * mean r^2), which is computed that way here so a pair with too
+    little common history can be left out instead of forcing a common window on everyone.
+    """
+    daily = _period_returns(splits, 1).corr(min_periods=MIN_COMMON_DAYS).to_numpy()
+    n = daily.shape[0]
+    pairs = _off_diagonal(daily)
+    windows = _period_returns(splits, holding_period)
+    six_month = _off_diagonal(windows.corr(min_periods=MIN_COMMON_WINDOWS).to_numpy())
+    mean_signed = float(pairs.mean()) if len(pairs) else 1.0
+    mean_abs = float(np.abs(pairs).mean()) if len(pairs) else 1.0
+    mean_squared = float((pairs ** 2).mean()) if len(pairs) else 1.0
+    mean_abs_six_month = float(np.abs(six_month).mean()) if len(six_month) else float("nan")
+    measures = {
+        "kish_signed_daily": _kish(n, mean_signed),
+        "kish_abs_daily": _kish(n, mean_abs),
+        "participation_daily": _kish(n, mean_squared),
+        "kish_abs_126": _kish(n, mean_abs_six_month) if len(six_month) else float("nan"),
+    }
+    # Guards the claim in the comment above: the rule's answer is fixed by construction.
+    headline = min(measures[m] for m in DAILY_EFFECTIVE_SERIES)
+    assert np.isclose(headline, measures[HEADLINE_EFFECTIVE_SERIES]), measures
+    return {
+        **measures,
+        "effective_series": measures[HEADLINE_EFFECTIVE_SERIES],
+        "mean_pairwise_correlation": mean_signed,
+        "mean_abs_correlation": mean_abs,
+        "mean_squared_correlation": mean_squared,
+        "mean_abs_correlation_126": mean_abs_six_month,
+        "negative_pairs_daily": int((pairs < 0).sum()),
+        "pairs_daily": len(pairs),
+        "pairs_126": len(six_month),
+        "windows_126": int(len(windows)),
+    }
 
 
 def leakage(splits):
@@ -812,7 +889,15 @@ def figure_effective_series(universe_frame, out):
     fig, ax = plt.subplots(figsize=(4.8, 3.4))
     top = universe_frame["symbols"].max() + 9  # room for labels right of the widest categories
     ax.plot([0, top], [0, top], color=RULE, linewidth=1)
-    ax.scatter(universe_frame["symbols"], universe_frame["effective_series"], color=BLUE, s=30, zorder=3)
+    # The signed measure first reported, hollow, joined to the headline so the categories it
+    # overstated -- the ones holding inverse funds -- show as a drop.
+    for _, row in universe_frame.iterrows():
+        ax.plot([row["symbols"]] * 2, [row["kish_signed_daily"], row["effective_series"]],
+                color=RULE, linewidth=1, zorder=1)
+    ax.scatter(universe_frame["symbols"], universe_frame["kish_signed_daily"], s=26, zorder=2,
+               facecolor="white", edgecolor=INK_MUTED, linewidth=1, label="signed correlation (first reported)")
+    ax.scatter(universe_frame["symbols"], universe_frame["effective_series"], color=BLUE, s=30, zorder=3,
+               label="absolute correlation (headline)")
     for _, row in universe_frame.iterrows():
         # Several categories sit close together; each label is placed by hand so none
         # overlaps a neighbour.
@@ -820,7 +905,8 @@ def figure_effective_series(universe_frame, out):
         ax.annotate(row["category"].replace("_", " "), (row["symbols"], row["effective_series"]),
                     textcoords="offset points", xytext=(dx, dy), fontsize=6.5, color=INK_MUTED, ha=ha)
     ax.set_xlim(0, top)
-    ax.set_ylim(0, max(6, universe_frame["effective_series"].max() + 1))
+    ax.set_ylim(0, max(6, universe_frame["kish_signed_daily"].max() + 1))
+    ax.legend(loc="upper right", fontsize=7)
     ax.set_xlabel("Tickers in category")
     ax.set_ylabel("Effective independent series")
     ax.set_title("Many tickers, few independent series\n(grey line: every ticker independent)")
@@ -835,7 +921,8 @@ def _data_measurements(categories, splits):
     universe_rows, label_rows, horizon_rows = [], [], []
     for category in categories:
         s = splits[category]
-        n_eff, mean_correlation = effective_series(s)
+        series = effective_series(s)
+        n_eff, n_eff_signed = series["effective_series"], series["kish_signed_daily"]
         leak_old, leak_new = leakage(s)
         sessions, common_start = coverage_sessions(s)
         swing = CALIBRATED_SWING_THRESHOLDS.get(category, DEFAULT_SWING_THRESHOLD)
@@ -847,8 +934,7 @@ def _data_measurements(categories, splits):
             row[f"{name}_rows"] = sum(len(f) for f in frames.values())
             row[f"{name}_first"] = str(min(f.index.min() for f in frames.values()).date()) if frames else None
             row[f"{name}_last"] = str(max(f.index.max() for f in frames.values()).date()) if frames else None
-        row.update({"mean_pairwise_correlation": mean_correlation, "effective_series": n_eff,
-                    "leak_per_symbol_split": leak_old, "leak_calendar_split": leak_new})
+        row.update({**series, "leak_per_symbol_split": leak_old, "leak_calendar_split": leak_new})
         universe_rows.append(row)
 
         label_specs = [(label, swing, m, lf) for label, m, lf in HORIZONS[1:]]
@@ -868,7 +954,8 @@ def _data_measurements(categories, splits):
             horizon_rows.append({"category": category, "horizon": label, "sessions_needed": need,
                                  "coverage_sessions": sessions, "fits_three_way_split": sessions >= need,
                                  "non_overlapping_holds": windows, "effective_series": n_eff,
-                                 "effective_independent_outcomes": windows * n_eff})
+                                 "effective_independent_outcomes": windows * n_eff,
+                                 "outcomes_with_signed_measure": windows * n_eff_signed})
         print(f"  {category}: data measurements done", flush=True)
     return universe_rows, label_rows, horizon_rows
 
@@ -885,10 +972,26 @@ def _write_tables(out, run, universe, labels_frame, horizons, results, folds, bo
         "`symbols` below `tickers_configured` means a configured ticker has no file in any split.",
     ])
     tables.add("T2", "How many independent series a category really holds", universe[[
-        "category", "symbols", "mean_pairwise_correlation", "effective_series"]],
-        {"mean_pairwise_correlation": "f2", "effective_series": "f2"}, [
-        "Effective series = n / (1 + (n - 1) * mean pairwise correlation of daily returns), over "
-        "all three splits, with returns taken within each split file so none spans an embargo gap.",
+        "category", "symbols", "mean_pairwise_correlation", "mean_abs_correlation",
+        "negative_pairs_daily", "pairs_daily", "kish_signed_daily", "kish_abs_daily",
+        "participation_daily", "mean_abs_correlation_126", "windows_126", "pairs_126",
+        "kish_abs_126", "effective_series"]],
+        {"mean_pairwise_correlation": "f2", "mean_abs_correlation": "f2",
+         "mean_abs_correlation_126": "f2", "kish_signed_daily": "f2", "kish_abs_daily": "f2",
+         "participation_daily": "f2", "kish_abs_126": "f2", "effective_series": "f2"}, [
+        "Kish measures are n / (1 + (n - 1) * m). kish_signed_daily uses the mean signed pairwise "
+        "correlation of daily returns (the measure first reported); kish_abs_daily the mean "
+        "absolute correlation; participation_daily is the eigenvalue effective rank, "
+        "n / (1 + (n - 1) * mean r^2). kish_abs_126 uses the mean absolute correlation of "
+        "non-overlapping 126-session returns.",
+        "effective_series is the headline and equals kish_abs_daily. The rule -- the most "
+        "conservative of the three daily measures -- was fixed before these were computed, and "
+        "selects kish_abs_daily by construction. The signed measure counts an inverse fund "
+        "(TBT, TMV, UUP) as extra diversification; the absolute and eigenvalue measures do not.",
+        f"kish_abs_126 rests on windows_126 six-month windows and is reported beside the headline, "
+        f"not instead of it. Daily pairs need {MIN_COMMON_DAYS} common days and six-month pairs "
+        f"{MIN_COMMON_WINDOWS} common windows; pairs_* count the pairs that qualified.",
+        "Returns are taken within each split file, so none spans an embargo gap.",
     ])
     tables.add("T3", "Leakage from splitting each symbol separately", universe[[
         "category", "leak_per_symbol_split", "leak_calendar_split"]],
@@ -908,13 +1011,16 @@ def _write_tables(out, run, universe, labels_frame, horizons, results, folds, bo
         "The current models use terminal labels at 63-126 sessions.",
     ])
     tables.add("T5", "Evidence available at each holding horizon", horizons,
-               {"effective_series": "f2", "effective_independent_outcomes": "f2"}, [
+               {"effective_series": "f2", "effective_independent_outcomes": "f2",
+                "outcomes_with_signed_measure": "f2"}, [
         "coverage_sessions counts trading days from the category's common start (its median "
         "symbol's first date) to the end of the data, including the two embargoed seams.",
         "sessions_needed is the project's own split-sizing rule (scripts/build_factor_datasets."
         "_required_sessions) evaluated at each horizon: train + validation + test.",
-        "effective_independent_outcomes = non_overlapping_holds x effective_series: roughly how "
-        "many genuinely separate outcomes the whole history offers, before any split.",
+        "effective_independent_outcomes = non_overlapping_holds x effective_series (the T2 "
+        "headline): roughly how many genuinely separate outcomes the whole history offers, "
+        "before any split. outcomes_with_signed_measure is the same count under the signed "
+        "measure first reported, for comparison.",
     ])
 
     tables.add("T6", "Models: calibration and ranking quality out of sample", pd.DataFrame([{
