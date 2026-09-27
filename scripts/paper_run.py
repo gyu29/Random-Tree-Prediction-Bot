@@ -284,8 +284,9 @@ def full_histories(splits):
 # (2026-09-27), as the most conservative of the three daily measures. That minimum is the
 # absolute-correlation measure by construction, for every category and any data: mean|r|
 # is at least mean r, and mean r^2 is at most mean|r|. So the rule leaves nothing to choose
-# after looking. The six-month measure is reported beside it and never used as it: with
-# 34-55 windows per category its correlations are noisy enough to land anywhere.
+# after looking. The six-month measure is reported beside it and never used as it: a pair
+# of symbols shares as few as MIN_COMMON_WINDOWS six-month windows, and a correlation from
+# a few dozen points is noisy enough to land anywhere.
 HEADLINE_EFFECTIVE_SERIES = "kish_abs_daily"
 DAILY_EFFECTIVE_SERIES = ("kish_signed_daily", "kish_abs_daily", "participation_daily")
 # Daily pairs need a year of common history, as before. Six-month pairs need ten years of
@@ -879,7 +880,9 @@ def figure_reliability(results, out):
 
 
 LABEL_OFFSETS = {
-    "energy_commodity": (-5, 6, "right"), "credit_conditions": (-6, -3, "right"),
+    "inflation_safe_haven": (-6, -3, "right"), "rates_recession": (-6, -3, "right"),
+    "small_cap": (5, -10, "left"),
+    "energy_commodity": (0, 7, "center"), "credit_conditions": (-6, -10, "right"),
     "market_beta": (0, -12, "center"), "growth_tech": (6, -3, "left"),
     "international_emerging": (6, -3, "left"),
 }
