@@ -741,10 +741,41 @@
     "baseline_volatility_auc": 0.8516525713764108,
     "baseline_ticker_volatility_auc": 0.8019938663576148,
     "baseline_within_mean": 0.6435829651719527,
-    "baseline_share_of_model_lift": 0.7761892753527442,
+    "baseline_lift_over_model_lift": 0.7761892753527442,
     "test_symbols_unseen_in_train": 3,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 34112
+    "baseline_train_rows": 34112,
+    "model_auc_within_pairs": 0.8000424917402831,
+    "model_auc_across_pairs": 0.8928517931296802,
+    "cross_symbol_pair_share": 0.9592784475281928,
+    "ticker_volatility_auc_within_pairs": 0.7128790001508765,
+    "volatility_auc_within_pairs": 0.7128790001508765,
+    "symbols_without_positives": 8,
+    "positive_episodes_total": 54,
+    "positive_episodes_median": 3.0,
+    "positive_episodes_max": 10,
+    "model_auc_within_baseline_deciles": 0.768391794232099,
+    "baseline_deciles": 10,
+    "model_coef_validation": 1.663402421307739,
+    "baseline_coef_validation": 0.3706798545291597,
+    "model_coef_test": 1.891819532479525,
+    "baseline_coef_test": 0.7758132449663572,
+    "combined_auc_test": 0.8994496674068214,
+    "ticker_rate_rank_corr_train_test": 0.6547693673140035,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -790,7 +821,7 @@
      "roc_auc": 0.8666688286446611
     }
    ],
-   "seconds": 76.9
+   "seconds": 75.5
   },
   {
    "category": "energy_commodity",
@@ -802,7 +833,7 @@
    "internal_ece": 0.05009563581401229,
    "internal_pr_auc": 0.33559986502124606,
    "internal_base_rate": 0.06831252630102398,
-   "reproduction_gap": 4.440892098500626e-16,
+   "reproduction_gap": 3.3306690738754696e-16,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 0 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -837,7 +868,7 @@
     },
     {
      "lower": 0.0031527160617889484,
-     "upper": 0.004251675875198257,
+     "upper": 0.004251675875198258,
      "num_trades": 21,
      "mean_profit": 0.04334308005344355,
      "standard_error": 0.04422412080935985,
@@ -846,7 +877,7 @@
      "block_standard_error": 0.07791329819812212
     },
     {
-     "lower": 0.004251675875198257,
+     "lower": 0.004251675875198258,
      "upper": 0.00797990452464956,
      "num_trades": 22,
      "mean_profit": 0.07705076058227656,
@@ -857,7 +888,7 @@
     },
     {
      "lower": 0.00797990452464956,
-     "upper": 0.016032761810323978,
+     "upper": 0.01603276181032399,
      "num_trades": 22,
      "mean_profit": -0.03147143550885279,
      "standard_error": 0.04551055058923885,
@@ -866,8 +897,8 @@
      "block_standard_error": 0.03582696936770754
     },
     {
-     "lower": 0.016032761810323978,
-     "upper": 0.0316191566360312,
+     "lower": 0.01603276181032399,
+     "upper": 0.03161915663603121,
      "num_trades": 21,
      "mean_profit": -0.08252338547334179,
      "standard_error": 0.0526216649813442,
@@ -876,7 +907,7 @@
      "block_standard_error": 0.05989031020356503
     },
     {
-     "lower": 0.0316191566360312,
+     "lower": 0.03161915663603121,
      "upper": 0.0730165980204886,
      "num_trades": 22,
      "mean_profit": -0.03932024646520356,
@@ -945,7 +976,7 @@
       "rows": 1504
      },
      {
-      "predicted": 0.024282316546323797,
+      "predicted": 0.0242823165463238,
       "observed": 0.14295212765957446,
       "rows": 1504
      },
@@ -967,10 +998,41 @@
     "baseline_volatility_auc": 0.679884181894041,
     "baseline_ticker_volatility_auc": 0.6471180775199419,
     "baseline_within_mean": 0.44570760818829974,
-    "baseline_share_of_model_lift": 2.5744292203889465,
+    "baseline_lift_over_model_lift": 2.5744292203889465,
     "test_symbols_unseen_in_train": 0,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 54173
+    "baseline_train_rows": 54173,
+    "model_auc_within_pairs": 0.4970318453583164,
+    "model_auc_across_pairs": 0.5599416674863619,
+    "cross_symbol_pair_share": 0.9555591427601313,
+    "ticker_volatility_auc_within_pairs": 0.524430680458999,
+    "volatility_auc_within_pairs": 0.524430680458999,
+    "symbols_without_positives": 2,
+    "positive_episodes_total": 123,
+    "positive_episodes_median": 7.0,
+    "positive_episodes_max": 19,
+    "model_auc_within_baseline_deciles": 0.5159793101358945,
+    "baseline_deciles": 10,
+    "model_coef_validation": 0.3863800256223366,
+    "baseline_coef_validation": 0.5210624760379345,
+    "model_coef_test": 0.058732231269556366,
+    "baseline_coef_test": 0.7134582787547313,
+    "combined_auc_test": 0.6299327508787785,
+    "ticker_rate_rank_corr_train_test": 0.6094809851772978,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -1016,7 +1078,7 @@
      "roc_auc": 0.7609035492300805
     }
    ],
-   "seconds": 104.6
+   "seconds": 109.4
   },
   {
    "category": "growth_tech",
@@ -1028,7 +1090,7 @@
    "internal_ece": 0.007640134402583238,
    "internal_pr_auc": 0.16048865394040324,
    "internal_base_rate": 0.021656866740408686,
-   "reproduction_gap": 3.6637359812630166e-14,
+   "reproduction_gap": 8.931744233109384e-14,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 1 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -1151,7 +1213,7 @@
       "rows": 1922
      },
      {
-      "predicted": 0.008405318639111953,
+      "predicted": 0.008405318639111954,
       "observed": 0.0205761316872428,
       "rows": 2430
      },
@@ -1161,7 +1223,7 @@
       "rows": 1880
      },
      {
-      "predicted": 0.024589924186283352,
+      "predicted": 0.02458992418628335,
       "observed": 0.09681372549019608,
       "rows": 1632
      },
@@ -1171,12 +1233,12 @@
       "rows": 2260
      },
      {
-      "predicted": 0.05497396303609794,
+      "predicted": 0.05497396303609795,
       "observed": 0.1301398897838067,
       "rows": 2359
      },
      {
-      "predicted": 0.13467086653154156,
+      "predicted": 0.1346708665315416,
       "observed": 0.2791828793774319,
       "rows": 2056
      }
@@ -1193,10 +1255,41 @@
     "baseline_volatility_auc": 0.8354191027165537,
     "baseline_ticker_volatility_auc": 0.799024375207674,
     "baseline_within_mean": 0.6333648210914604,
-    "baseline_share_of_model_lift": 0.9261674113855726,
+    "baseline_lift_over_model_lift": 0.9261674113855726,
     "test_symbols_unseen_in_train": 0,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 145574
+    "baseline_train_rows": 145574,
+    "model_auc_within_pairs": 0.6464291621795755,
+    "model_auc_across_pairs": 0.8286426499554436,
+    "cross_symbol_pair_share": 0.9682760665517973,
+    "ticker_volatility_auc_within_pairs": 0.6924999739739068,
+    "volatility_auc_within_pairs": 0.6924999739739068,
+    "symbols_without_positives": 10,
+    "positive_episodes_total": 88,
+    "positive_episodes_median": 4.0,
+    "positive_episodes_max": 13,
+    "model_auc_within_baseline_deciles": 0.6717313257477863,
+    "baseline_deciles": 10,
+    "model_coef_validation": 2.3868711528762754,
+    "baseline_coef_validation": 0.4611787716028444,
+    "model_coef_test": 2.318813380866976,
+    "baseline_coef_test": 0.7724650882318546,
+    "combined_auc_test": 0.844235504016237,
+    "ticker_rate_rank_corr_train_test": 0.5071206865527496,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -1242,7 +1335,7 @@
      "roc_auc": 0.8629847248433189
     }
    ],
-   "seconds": 248.9
+   "seconds": 251.3
   },
   {
    "category": "inflation_safe_haven",
@@ -1294,7 +1387,7 @@
       "rows": 978
      },
      {
-      "predicted": 0.1037050257606589,
+      "predicted": 0.10370502576065889,
       "observed": 0.18609406952965235,
       "rows": 978
      },
@@ -1314,7 +1407,7 @@
       "rows": 978
      },
      {
-      "predicted": 0.5640561782428049,
+      "predicted": 0.5640561782428047,
       "observed": 0.4703476482617587,
       "rows": 978
      }
@@ -1331,10 +1424,41 @@
     "baseline_volatility_auc": 0.7873783908246035,
     "baseline_ticker_volatility_auc": 0.8136948571342799,
     "baseline_within_mean": 0.5316523037855925,
-    "baseline_share_of_model_lift": 0.9621186659312791,
+    "baseline_lift_over_model_lift": 0.9621186659312791,
     "test_symbols_unseen_in_train": 1,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 26331
+    "baseline_train_rows": 26331,
+    "model_auc_within_pairs": 0.5971822333768234,
+    "model_auc_across_pairs": 0.8409003312915124,
+    "cross_symbol_pair_share": 0.9390508123947018,
+    "ticker_volatility_auc_within_pairs": 0.5178016273480812,
+    "volatility_auc_within_pairs": 0.4821983726519188,
+    "symbols_without_positives": 7,
+    "positive_episodes_total": 80,
+    "positive_episodes_median": 14.5,
+    "positive_episodes_max": 20,
+    "model_auc_within_baseline_deciles": 0.6018728472543299,
+    "baseline_deciles": 10,
+    "model_coef_validation": 0.7875463655640738,
+    "baseline_coef_validation": 1.4136696170229959,
+    "model_coef_test": 2.044171415662625,
+    "baseline_coef_test": 0.980366679659513,
+    "combined_auc_test": 0.8309390759418726,
+    "ticker_rate_rank_corr_train_test": 0.8472536749807948,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -1380,7 +1504,7 @@
      "roc_auc": 0.8437825259387959
     }
    ],
-   "seconds": 72.1
+   "seconds": 61.3
   },
   {
    "category": "international_emerging",
@@ -1392,7 +1516,7 @@
    "internal_ece": 0.0065667559955356865,
    "internal_pr_auc": 0.27939791659770397,
    "internal_base_rate": 0.007492572019118977,
-   "reproduction_gap": 5.88418203051333e-15,
+   "reproduction_gap": 6.6058269965196814e-15,
    "floor": 0.018749043597577356,
    "floor_in_config": 0.018749,
    "floor_note": "floor 1.87%, best of 2 candidates: trades above it earn +9.40% against +0.71% below, a separation of +8.69% at 3.01 standard errors (needed 2.60 after correcting for the search) on 50 trades",
@@ -1519,10 +1643,10 @@
     "pr_auc": 0.10249993478339592,
     "pr_auc_lift": 2.835366043381568,
     "roc_auc": 0.7740809210004191,
-    "ece": 0.02733329864256302,
+    "ece": 0.027333298642563012,
     "reliability": [
      {
-      "predicted": 3.898753896049209e-07,
+      "predicted": 3.898753896046421e-07,
       "observed": 0.000273000273000273,
       "rows": 3663
      },
@@ -1547,7 +1671,7 @@
       "rows": 2366
      },
      {
-      "predicted": 0.009128336397492467,
+      "predicted": 0.009128336397492465,
       "observed": 0.030142781597038603,
       "rows": 1891
      },
@@ -1562,7 +1686,7 @@
       "rows": 1792
      },
      {
-      "predicted": 0.029405052670570045,
+      "predicted": 0.029405052670570038,
       "observed": 0.10829694323144105,
       "rows": 2290
      }
@@ -1579,10 +1703,41 @@
     "baseline_volatility_auc": 0.785192677999329,
     "baseline_ticker_volatility_auc": 0.7969618598227003,
     "baseline_within_mean": 0.6937742694039555,
-    "baseline_share_of_model_lift": 1.0834824209535043,
+    "baseline_lift_over_model_lift": 1.0834824209535043,
     "test_symbols_unseen_in_train": 0,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 101866
+    "baseline_train_rows": 101866,
+    "model_auc_within_pairs": 0.64403863938184,
+    "model_auc_across_pairs": 0.7783475953292688,
+    "cross_symbol_pair_share": 0.9682323915128951,
+    "ticker_volatility_auc_within_pairs": 0.6852661059514992,
+    "volatility_auc_within_pairs": 0.6852661059514992,
+    "symbols_without_positives": 3,
+    "positive_episodes_total": 80,
+    "positive_episodes_median": 2.0,
+    "positive_episodes_max": 14,
+    "model_auc_within_baseline_deciles": 0.6142370619654595,
+    "baseline_deciles": 10,
+    "model_coef_validation": 0.997132485697563,
+    "baseline_coef_validation": 0.6736653937939856,
+    "model_coef_test": 1.7296467800461375,
+    "baseline_coef_test": 0.8354625452671056,
+    "combined_auc_test": 0.8130853541886249,
+    "ticker_rate_rank_corr_train_test": 0.742487774877507,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": {
     "model_trades": 102,
@@ -1643,7 +1798,7 @@
      "roc_auc": 0.8109297702315318
     }
    ],
-   "seconds": 239.5
+   "seconds": 216.4
   },
   {
    "category": "market_beta",
@@ -1655,7 +1810,7 @@
    "internal_ece": 0.016491761796229135,
    "internal_pr_auc": 0.10256003062605405,
    "internal_base_rate": 0.014962355856285142,
-   "reproduction_gap": 3.558264793923627e-14,
+   "reproduction_gap": 4.707345624410664e-14,
    "floor": null,
    "floor_in_config": null,
    "floor_note": "only 1 bin(s) reached 25 trades -- the marginal curve is not estimable",
@@ -1763,22 +1918,22 @@
       "rows": 1790
      },
      {
-      "predicted": 0.006746524923873505,
+      "predicted": 0.006746524923873506,
       "observed": 0.03734439834024896,
       "rows": 1687
      },
      {
-      "predicted": 0.012802014478560499,
+      "predicted": 0.012802014478560506,
       "observed": 0.03512506652474721,
       "rows": 1879
      },
      {
-      "predicted": 0.02247542034883165,
+      "predicted": 0.022475420348831654,
       "observed": 0.0842911877394636,
       "rows": 1827
      },
      {
-      "predicted": 0.028672133036133512,
+      "predicted": 0.028672133036133515,
       "observed": 0.08620689655172414,
       "rows": 1740
      },
@@ -1820,10 +1975,41 @@
     "baseline_volatility_auc": 0.6358282557465652,
     "baseline_ticker_volatility_auc": 0.5120072519506038,
     "baseline_within_mean": 0.5355442936927474,
-    "baseline_share_of_model_lift": 0.05765886985914807,
+    "baseline_lift_over_model_lift": 0.05765886985914807,
     "test_symbols_unseen_in_train": 1,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 85065
+    "baseline_train_rows": 85065,
+    "model_auc_within_pairs": 0.7200129105167341,
+    "model_auc_across_pairs": 0.7077688749792259,
+    "cross_symbol_pair_share": 0.9609995544016392,
+    "ticker_volatility_auc_within_pairs": 0.5581367176281924,
+    "volatility_auc_within_pairs": 0.5581367176281924,
+    "symbols_without_positives": 2,
+    "positive_episodes_total": 186,
+    "positive_episodes_median": 8.0,
+    "positive_episodes_max": 17,
+    "model_auc_within_baseline_deciles": 0.7077932434102716,
+    "baseline_deciles": 10,
+    "model_coef_validation": 1.1138676652107529,
+    "baseline_coef_validation": 0.7275485248795006,
+    "model_coef_test": 1.2912212565646288,
+    "baseline_coef_test": -0.19284953874130523,
+    "combined_auc_test": 0.6576873877888869,
+    "ticker_rate_rank_corr_train_test": 0.06833374807111686,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -1869,7 +2055,7 @@
      "roc_auc": 0.8848145608242907
     }
    ],
-   "seconds": 159.1
+   "seconds": 169.7
   },
   {
    "category": "rates_recession",
@@ -1966,10 +2152,41 @@
     "baseline_volatility_auc": 0.9332657875992972,
     "baseline_ticker_volatility_auc": 0.8007862938689034,
     "baseline_within_mean": 0.2905935505164758,
-    "baseline_share_of_model_lift": 0.7779541895965199,
+    "baseline_lift_over_model_lift": 0.7779541895965199,
     "test_symbols_unseen_in_train": 0,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 29508
+    "baseline_train_rows": 29508,
+    "model_auc_within_pairs": 0.7775299698086976,
+    "model_auc_across_pairs": 0.8933393264917836,
+    "cross_symbol_pair_share": 0.9421308693995739,
+    "ticker_volatility_auc_within_pairs": 0.2982907497393189,
+    "volatility_auc_within_pairs": 0.7017092502606811,
+    "symbols_without_positives": 8,
+    "positive_episodes_total": 43,
+    "positive_episodes_median": 6.0,
+    "positive_episodes_max": 14,
+    "model_auc_within_baseline_deciles": 0.8078385293145329,
+    "baseline_deciles": 10,
+    "model_coef_validation": 0.06843737167873244,
+    "baseline_coef_validation": 1.959812963053156,
+    "model_coef_test": 2.6054354337145744,
+    "baseline_coef_test": -0.4066848623234073,
+    "combined_auc_test": 0.8118514761595637,
+    "ticker_rate_rank_corr_train_test": 0.9226881656404711,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": null,
    "test_at_config_floor": null,
@@ -2015,7 +2232,7 @@
      "roc_auc": 0.8025143753054794
     }
    ],
-   "seconds": 61.5
+   "seconds": 71.5
   },
   {
    "category": "small_cap",
@@ -2027,7 +2244,7 @@
    "internal_ece": 0.004504865076856103,
    "internal_pr_auc": 0.03626265476246882,
    "internal_base_rate": 0.007665873645255088,
-   "reproduction_gap": 2.703566537309854e-15,
+   "reproduction_gap": 7.771561172376096e-15,
    "floor": 0.001288659793814433,
    "floor_in_config": 0.001288659793814433,
    "floor_note": "floor 0.13%, best of 1 candidates: trades above it earn +11.18% against -4.62% below, a separation of +15.80% at 2.75 standard errors (needed 2.53 after correcting for the search) on 73 trades",
@@ -2108,7 +2325,7 @@
     "ece": 0.03621279739807965,
     "reliability": [
      {
-      "predicted": 2.677598688378963e-07,
+      "predicted": 2.677598688377822e-07,
       "observed": 0.0008498583569405099,
       "rows": 7060
      },
@@ -2118,7 +2335,7 @@
       "rows": 3055
      },
      {
-      "predicted": 0.014735442222215825,
+      "predicted": 0.014735442222215818,
       "observed": 0.24206008583690988,
       "rows": 1165
      }
@@ -2135,10 +2352,41 @@
     "baseline_volatility_auc": 0.6171681484284433,
     "baseline_ticker_volatility_auc": 0.5957505406371065,
     "baseline_within_mean": 0.6318130310932201,
-    "baseline_share_of_model_lift": 0.24131091930134718,
+    "baseline_lift_over_model_lift": 0.24131091930134718,
     "test_symbols_unseen_in_train": 0,
     "test_rows_missing_volatility": 0,
-    "baseline_train_rows": 50892
+    "baseline_train_rows": 50892,
+    "model_auc_within_pairs": 0.8963046457426479,
+    "model_auc_across_pairs": 0.8968279712325448,
+    "cross_symbol_pair_share": 0.9336266255781762,
+    "ticker_volatility_auc_within_pairs": 0.6232055020142893,
+    "volatility_auc_within_pairs": 0.6232055020142893,
+    "symbols_without_positives": 0,
+    "positive_episodes_total": 66,
+    "positive_episodes_median": 4.0,
+    "positive_episodes_max": 7,
+    "model_auc_within_baseline_deciles": 0.8873516963547934,
+    "baseline_deciles": 10,
+    "model_coef_validation": 0.7709368502985232,
+    "baseline_coef_validation": 1.4795630678567346,
+    "model_coef_test": 3.1955732386553533,
+    "baseline_coef_test": 0.8757444122265876,
+    "combined_auc_test": 0.8547441526037003,
+    "ticker_rate_rank_corr_train_test": 0.23566346087481224,
+    "scored_window_test": {
+     "first_scored": "2023-03-07",
+     "last_scored": "2026-03-05",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    },
+    "scored_window_validation": {
+     "first_scored": "2018-05-17",
+     "last_scored": "2021-05-12",
+     "rows_on_disk_per_symbol": 1082,
+     "scored_rows_per_symbol": 752,
+     "non_overlapping_holds": 5
+    }
    },
    "test": {
     "model_trades": 97,
@@ -2199,7 +2447,7 @@
      "roc_auc": 0.7868603257362317
     }
    ],
-   "seconds": 107.8
+   "seconds": 118.4
   }
  ]
 }

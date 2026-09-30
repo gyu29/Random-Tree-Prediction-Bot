@@ -1,7 +1,7 @@
 {
- "started_at": "2026-09-30T12:09:57.441275+00:00",
+ "started_at": "2026-09-30T12:54:11.067472+00:00",
  "command": "python3.11 scripts/paper_run.py --require-clean",
- "git_commit": "7c13aeb32697ed9178dfbce61d7d8b49c13f5da7",
+ "git_commit": "c85ea0b322418807a235bb8bd56232f49c96fe0a",
  "git_dirty": false,
  "git_changed_files": [],
  "python": "3.11.3",
@@ -76,7 +76,7 @@
    "validation_start": "2017-07-26"
   }
  },
- "finished_at": "2026-09-30T12:28:01.325995+00:00",
+ "finished_at": "2026-09-30T13:12:14.943606+00:00",
  "categories": [
   "credit_conditions",
   "energy_commodity",

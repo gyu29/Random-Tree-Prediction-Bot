@@ -1,0 +1,17 @@
+category,split,first_scored,last_scored,rows_on_disk_per_symbol,scored_rows_per_symbol,non_overlapping_holds
+credit_conditions,validation,2018-05-17,2021-05-12,1082,752,5
+credit_conditions,test,2023-03-07,2026-03-05,1082,752,5
+energy_commodity,validation,2018-05-17,2021-05-12,1082,752,5
+energy_commodity,test,2023-03-07,2026-03-05,1082,752,5
+growth_tech,validation,2018-05-17,2021-05-12,1082,752,5
+growth_tech,test,2023-03-07,2026-03-05,1082,752,5
+inflation_safe_haven,validation,2018-05-17,2021-05-12,1082,752,5
+inflation_safe_haven,test,2023-03-07,2026-03-05,1082,752,5
+international_emerging,validation,2018-05-17,2021-05-12,1082,752,5
+international_emerging,test,2023-03-07,2026-03-05,1082,752,5
+market_beta,validation,2018-05-17,2021-05-12,1082,752,5
+market_beta,test,2023-03-07,2026-03-05,1082,752,5
+rates_recession,validation,2018-05-17,2021-05-12,1082,752,5
+rates_recession,test,2023-03-07,2026-03-05,1082,752,5
+small_cap,validation,2018-05-17,2021-05-12,1082,752,5
+small_cap,test,2023-03-07,2026-03-05,1082,752,5
