@@ -70,6 +70,7 @@ To pin a new snapshot (this starts a new dataset, and every number changes):
 | T7 | Does a probability floor separate good trades from bad ones on validation? |
 | T8 | Out of sample, does trading above that floor beat ignoring the model? |
 | T9 | Is ranking quality stable across walk-forward folds? |
+| T10 | Does the ranking survive within each symbol, and how much does a ticker-and-volatility baseline match? |
 
 | figure | shows |
 |---|---|
@@ -80,6 +81,7 @@ To pin a new snapshot (this starts a new dataset, and every number changes):
 | fig5 | Leakage under the old per-symbol split |
 | fig6 | Out-of-sample calibration (reliability diagrams) |
 | fig7 | Tickers vs effective independent series |
+| fig8 | Pooled AUC, within-symbol AUC and the ticker-and-volatility baseline |
 
 ## Rules the run follows
 

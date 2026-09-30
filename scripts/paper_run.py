@@ -58,6 +58,7 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from scipy.stats import norm  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import average_precision_score, roc_auc_score  # noqa: E402
 
 from app.config import (  # noqa: E402
@@ -120,6 +121,9 @@ HORIZONS = [
 # The per-symbol split build_factor_datasets.py replaced, measured for the leakage table.
 PER_SYMBOL_FRACTIONS = (0.55, 0.15)
 RELIABILITY_BINS = 10
+# Trailing window for the ticker-and-volatility baseline: one holding period, so the
+# baseline sees the same span of history a trade is exposed to.
+VOLATILITY_WINDOW = DEFAULT_LOOKFORWARD_PERIODS
 
 # Print-friendly: white surface, recessive axes. Categorical order from the dataviz
 # reference palette -- slot 1 is the primary series, slot 2 the comparison.
@@ -426,11 +430,20 @@ def coverage_sessions(splits):
 # ------------------------------------------------------------------ model evaluation
 
 
+def trailing_volatility(frame):
+    """Standard deviation of daily returns over the previous holding period, known at close."""
+    return frame["close"].pct_change().rolling(VOLATILITY_WINDOW).std()
+
+
 def labeled_rows(detector, frames, swing_threshold):
-    """Every scorable row with a known outcome: features complete, full label window."""
+    """Every scorable row with a known outcome: features complete, full label window.
+
+    Returns (probabilities, labels, meta), meta holding each row's symbol and trailing
+    volatility for the within-symbol and baseline comparisons.
+    """
     context = resolve_market_context(detector)
-    X_parts, y_parts = [], []
-    for frame in frames.values():
+    X_parts, y_parts, meta_parts = [], [], []
+    for symbol, frame in frames.items():
         features = TechnicalIndicators.create_all_indicators(frame, market_context=context)
         labeled = create_swing_labels(features, swing_threshold, detector.lookforward_periods,
                                       detector.min_hold_periods, mode=LABEL_MODE)
@@ -444,10 +457,106 @@ def labeled_rows(detector, frames, swing_threshold):
         keep = X.notna().all(axis=1)
         X_parts.append(X[keep])
         y_parts.append(labeled.loc[keep, "swing_label"].astype(int))
+        meta_parts.append(pd.DataFrame({
+            "symbol": symbol,
+            "volatility": trailing_volatility(frame).reindex(X.index[keep]).to_numpy(),
+        }))
     if not X_parts:
-        return None, None
+        return None, None, None
     X, y = pd.concat(X_parts), pd.concat(y_parts).to_numpy()
-    return detector.model.predict_proba(detector.scaler.transform(X))[:, 1], y
+    meta = pd.concat(meta_parts, ignore_index=True)
+    return detector.model.predict_proba(detector.scaler.transform(X))[:, 1], y, meta
+
+
+# ---------------------------------------------- where the ranking skill comes from
+#
+# A pooled test ROC-AUC compares every row with every other, across symbols. A model can
+# score well on that by sorting symbols -- volatile ones clear a fixed-percentage label
+# far more often than calm ones -- without ranking any one symbol's good dates above its
+# bad ones. Two checks separate the two, both fixed before either was computed
+# (2026-09-30), on exactly the test rows behind T6's ROC-AUC:
+#
+#   * Within-symbol AUC: each symbol's own ROC-AUC, then the unweighted mean over symbols
+#     whose test rows hold both outcomes. Sorting symbols contributes nothing to it.
+#   * A baseline that knows only the ticker and its trailing volatility: logistic
+#     regression on a one-hot ticker and VOLATILITY_WINDOW-session realized volatility,
+#     fit on train/ with the same labels, scored on the same test rows. Its pooled AUC is
+#     the primary comparison; ticker-only and volatility-only fits are reported beside it.
+#
+# No threshold decides what counts as "close to the model". The table reports the
+# baseline's share of the model's lift above 0.5, (baseline - 0.5) / (model - 0.5).
+BASELINES = {"ticker": (True, False), "volatility": (False, True), "ticker_volatility": (True, True)}
+
+
+def per_symbol_aucs(labels, scores, symbols):
+    """ROC-AUC within each symbol that has both outcomes in these rows."""
+    aucs = []
+    for symbol in np.unique(symbols):
+        rows = symbols == symbol
+        if 0 < labels[rows].mean() < 1:
+            aucs.append(float(roc_auc_score(labels[rows], scores[rows])))
+    return aucs
+
+
+def baseline_training_rows(train_frames, swing_threshold, lookforward, min_hold):
+    parts = []
+    for symbol, frame in train_frames.items():
+        if len(frame) <= lookforward:
+            continue
+        labels = create_swing_labels(frame, swing_threshold, lookforward, min_hold,
+                                     mode=LABEL_MODE)["swing_label"].iloc[:-lookforward]
+        parts.append(pd.DataFrame({"symbol": symbol, "volatility": trailing_volatility(frame).iloc[:-lookforward],
+                                   "label": labels.astype(int)}).dropna())
+    return pd.concat(parts, ignore_index=True)
+
+
+def ranking_sources(detector, train_frames, swing_threshold, test_probabilities, test_labels, meta):
+    symbols = meta["symbol"].to_numpy()
+    model_within = per_symbol_aucs(test_labels, test_probabilities, symbols)
+    train = baseline_training_rows(train_frames, swing_threshold, detector.lookforward_periods,
+                                   detector.min_hold_periods)
+    known = sorted(train["symbol"].unique())
+    mean, spread = train["volatility"].mean(), train["volatility"].std()
+    # A test row with no trailing volatility would be dropped from the baseline and not
+    # from the model, so it takes the training mean instead. Counted, and expected to be 0:
+    # every scored test row sits past the 204-session feature warm-up.
+    missing_volatility = int(meta["volatility"].isna().sum())
+    test_volatility = meta["volatility"].fillna(mean)
+
+    def design(symbol_column, volatility, use_ticker, use_volatility):
+        columns = []
+        if use_ticker:
+            columns.append(pd.get_dummies(pd.Categorical(symbol_column, categories=known)).to_numpy(float))
+        if use_volatility:
+            columns.append(((np.asarray(volatility, float) - mean) / spread).reshape(-1, 1))
+        return np.hstack(columns)
+
+    baselines = {}
+    for name, (use_ticker, use_volatility) in BASELINES.items():
+        fitted = LogisticRegression(max_iter=1000).fit(
+            design(train["symbol"], train["volatility"], use_ticker, use_volatility), train["label"])
+        scores = fitted.predict_proba(design(symbols, test_volatility, use_ticker, use_volatility))[:, 1]
+        baselines[name] = {"pooled_auc": float(roc_auc_score(test_labels, scores)),
+                           "within_symbol": per_symbol_aucs(test_labels, scores, symbols)}
+    model_auc = float(roc_auc_score(test_labels, test_probabilities))
+    primary = baselines["ticker_volatility"]["pooled_auc"]
+    return {
+        "model_auc_pooled": model_auc,
+        "model_auc_within_mean": float(np.mean(model_within)) if model_within else float("nan"),
+        "model_auc_within_min": float(np.min(model_within)) if model_within else float("nan"),
+        "model_auc_within_max": float(np.max(model_within)) if model_within else float("nan"),
+        "symbols_scored": int(len(np.unique(symbols))),
+        "symbols_both_classes": len(model_within),
+        "baseline_ticker_auc": baselines["ticker"]["pooled_auc"],
+        "baseline_volatility_auc": baselines["volatility"]["pooled_auc"],
+        "baseline_ticker_volatility_auc": primary,
+        "baseline_within_mean": (float(np.mean(baselines["ticker_volatility"]["within_symbol"]))
+                                 if baselines["ticker_volatility"]["within_symbol"] else float("nan")),
+        "baseline_share_of_model_lift": (primary - 0.5) / (model_auc - 0.5) if model_auc != 0.5 else float("nan"),
+        "test_symbols_unseen_in_train": int(len(set(symbols) - set(known))),
+        "test_rows_missing_volatility": missing_volatility,
+        "baseline_train_rows": int(len(train)),
+    }
 
 
 def classification(probabilities, labels):
@@ -588,8 +697,10 @@ def evaluate_category(category, splits, out, folds):
     pd.DataFrame({"entry_date": dates, "entry_probability": probabilities, "profit_pct": profits}).to_csv(
         os.path.join(out, "trades", f"{category}_validation_all_entries.csv"), index=False)
 
-    test_probabilities, test_labels = labeled_rows(detector, splits["test"], swing_threshold)
+    test_probabilities, test_labels, test_meta = labeled_rows(detector, splits["test"], swing_threshold)
     test_classification = classification(test_probabilities, test_labels)
+    ranking = ranking_sources(detector, splits["train"], swing_threshold, test_probabilities,
+                              test_labels, test_meta)
 
     result = {
         "category": category,
@@ -608,6 +719,7 @@ def evaluate_category(category, splits, out, folds):
         "floor_details": details,
         "curve": [{**band, "block_standard_error": error} for band, error in zip(curve, bin_errors)],
         "test_classification": test_classification,
+        "ranking_sources": ranking,
         "test": None,
         "test_at_config_floor": None,
         "cross_validation": None,
@@ -917,6 +1029,31 @@ def figure_effective_series(universe_frame, out):
     _save(fig, out, "fig7_effective_series")
 
 
+def figure_ranking_sources(results, out):
+    rows = [r for r in results if r.get("ranking_sources")]
+    if not rows:
+        return
+    rows = sorted(rows, key=lambda r: r["ranking_sources"]["model_auc_pooled"])
+    fig, ax = plt.subplots(figsize=(5.6, 0.34 * len(rows) + 1.6))
+    y = np.arange(len(rows))
+    series = [("model_auc_pooled", "model, pooled (T6)", BLUE, "o"),
+              ("model_auc_within_mean", "model, within symbol (mean)", ORANGE, "s"),
+              ("baseline_ticker_volatility_auc", "ticker + volatility baseline, pooled", AQUA, "D")]
+    for key, label, color, marker in series:
+        ax.scatter([r["ranking_sources"][key] for r in rows], y, color=color, marker=marker, s=32,
+                   label=label, zorder=3, edgecolor="white", linewidth=0.8)
+    ax.axvline(0.5, color=RULE, linewidth=1)
+    ax.set_yticks(y)
+    ax.set_yticklabels([r["category"].replace("_", " ") for r in rows])
+    ax.set_ylim(-0.6, len(rows) - 0.4)
+    ax.set_xlim(0.3, 1.0)
+    ax.set_xlabel("Test ROC-AUC (0.5 = random)")
+    ax.set_title("How much of the ranking is just telling symbols apart?")
+    fig.legend(loc="lower center", fontsize=7.5, ncol=2)
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    _save(fig, out, "fig8_ranking_sources")
+
+
 # ----------------------------------------------------------------------------- main
 
 
@@ -1118,6 +1255,27 @@ def _write_tables(out, run, universe, labels_frame, horizons, results, folds, bo
         "Only categories with a validation floor have a rule to test; the rest are in T7.",
     ] + disclosures)
 
+    tables.add("T10", "Where the ranking comes from: within-symbol AUC and a ticker-and-volatility baseline",
+               pd.DataFrame([{"category": r["category"], **r["ranking_sources"]} for r in results]), {
+        "model_auc_pooled": "f3", "model_auc_within_mean": "f3", "model_auc_within_min": "f3",
+        "model_auc_within_max": "f3", "baseline_ticker_auc": "f3", "baseline_volatility_auc": "f3",
+        "baseline_ticker_volatility_auc": "f3", "baseline_within_mean": "f3",
+        "baseline_share_of_model_lift": "f2"}, [
+        "Same test rows as T6. model_auc_pooled is T6's test ROC-AUC. model_auc_within_* are "
+        "each symbol's own ROC-AUC, averaged without weights over the symbols whose test rows "
+        "hold both outcomes (symbols_both_classes of symbols_scored). Sorting symbols from one "
+        "another contributes nothing to them.",
+        f"Baselines are logistic regressions fit on train/ with the same labels: ticker (one-hot "
+        f"symbol only), volatility ({VOLATILITY_WINDOW}-session realized volatility only), and "
+        "ticker_volatility (both; the primary comparison). baseline_within_mean is the "
+        "ticker_volatility baseline's within-symbol AUC.",
+        "baseline_share_of_model_lift = (baseline_ticker_volatility_auc - 0.5) / "
+        "(model_auc_pooled - 0.5): the share of the model's pooled lift above random that a "
+        "model knowing only the ticker and its recent volatility also achieves.",
+        "Both checks were fixed before either was computed. The rows overlap by up to 99% of "
+        "their outcome window, so, as in T6, no standard errors are attached.",
+    ])
+
     if folds:
         cv_rows = []
         for r in results:
@@ -1212,6 +1370,7 @@ def main(argv=None):
     figure_leakage(universe, out)
     figure_reliability(results, out)
     figure_effective_series(universe, out)
+    figure_ranking_sources(results, out)
 
     with open(os.path.join(out, "run_manifest.json"), "w", encoding="utf-8") as handle:
         json.dump(run, handle, indent=1, default=str)
