@@ -70,7 +70,9 @@ To pin a new snapshot (this starts a new dataset, and every number changes):
 | T7 | Does a probability floor separate good trades from bad ones on validation? |
 | T8 | Out of sample, does trading above that floor beat ignoring the model? |
 | T9 | Is ranking quality stable across walk-forward folds? |
-| T10 | Does the ranking survive within each symbol, and how much does a ticker-and-volatility baseline match? |
+| T10 | How much of the pooled AUC comes from same-symbol pairs (timing) against cross-symbol pairs (sorting)? |
+| T11 | How do ticker and volatility baselines compare, and does the model add anything once they are known? |
+| T12 | How many rows of each split are actually scored, and how many holding periods do they hold? |
 
 | figure | shows |
 |---|---|
@@ -81,7 +83,7 @@ To pin a new snapshot (this starts a new dataset, and every number changes):
 | fig5 | Leakage under the old per-symbol split |
 | fig6 | Out-of-sample calibration (reliability diagrams) |
 | fig7 | Tickers vs effective independent series |
-| fig8 | Pooled AUC, within-symbol AUC and the ticker-and-volatility baseline |
+| fig8 | The model's pooled and same-symbol AUC against pure sorting and volatility timing |
 
 ## Rules the run follows
 

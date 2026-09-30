@@ -57,7 +57,7 @@ import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from scipy.stats import norm  # noqa: E402
+from scipy.stats import norm, rankdata, spearmanr  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import average_precision_score, roc_auc_score  # noqa: E402
 
@@ -459,7 +459,9 @@ def labeled_rows(detector, frames, swing_threshold):
         y_parts.append(labeled.loc[keep, "swing_label"].astype(int))
         meta_parts.append(pd.DataFrame({
             "symbol": symbol,
+            "date": X.index[keep],
             "volatility": trailing_volatility(frame).reindex(X.index[keep]).to_numpy(),
+            "rows_on_disk": len(frame),
         }))
     if not X_parts:
         return None, None, None
@@ -483,8 +485,9 @@ def labeled_rows(detector, frames, swing_threshold):
 #     fit on train/ with the same labels, scored on the same test rows. Its pooled AUC is
 #     the primary comparison; ticker-only and volatility-only fits are reported beside it.
 #
-# No threshold decides what counts as "close to the model". The table reports the
-# baseline's share of the model's lift above 0.5, (baseline - 0.5) / (model - 0.5).
+# No threshold decides what counts as "close to the model". The table reports the ratio of
+# the baseline's lift above 0.5 to the model's, (baseline - 0.5) / (model - 0.5). It was first
+# labelled a share; it is not one (see T11's notes), and was renamed after review.
 BASELINES = {"ticker": (True, False), "volatility": (False, True), "ticker_volatility": (True, True)}
 
 
@@ -510,7 +513,83 @@ def baseline_training_rows(train_frames, swing_threshold, lookforward, min_hold)
     return pd.concat(parts, ignore_index=True)
 
 
-def ranking_sources(detector, train_frames, swing_threshold, test_probabilities, test_labels, meta):
+# ------------------------------------------- added after review (2026-09-30), post hoc
+#
+# Everything below this line in the ranking analysis was specified after the first T10 had
+# been seen, in response to a review, and is reported as such. None of it changes a rule or
+# a threshold; it re-reads rows T6 already scored. It is fixed here, before being computed:
+#
+#   * Pair-weighted within-symbol AUC: only positive-negative pairs from the same symbol,
+#     each pair counted once, so a symbol with one positive episode no longer weighs as
+#     much as one with many. Beside it, positive episodes per symbol (runs of consecutive
+#     positive rows) and the share of the pooled AUC's pairs that are cross-symbol -- the
+#     pairs a sort by volatility can win without timing anything.
+#   * Whether the model adds anything once the baseline is known, two ways: the model's
+#     AUC within deciles of the ticker-and-volatility baseline's score (pair-weighted
+#     across deciles), and a logistic regression on both scores' log-odds, fit on
+#     validation, with the model's standardized coefficient read on validation and on
+#     test and the combination's test AUC. No standard errors: the rows overlap.
+#   * For rates_recession's volatility-only 0.933 against ticker-and-volatility 0.801:
+#     the rank correlation of each ticker's positive rate on train against test, which is
+#     what a ticker effect relies on.
+#   * The scored window of each split: rows on disk against rows actually scored, and the
+#     non-overlapping holds those scored rows contain.
+DECILES = 10
+
+
+def _mann_whitney(labels, scores):
+    """(correctly ordered positive-negative pairs, ties counting half; pair count)."""
+    positives = int(labels.sum())
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        return 0.0, 0
+    ranks = rankdata(scores)
+    return float(ranks[labels == 1].sum() - positives * (positives + 1) / 2), positives * negatives
+
+
+def pair_split(labels, scores, groups):
+    """Pooled AUC split into pairs inside one group and pairs across groups."""
+    wins_all, pairs_all = _mann_whitney(labels, scores)
+    wins_in = pairs_in = 0
+    for group in np.unique(groups):
+        rows = groups == group
+        wins, pairs = _mann_whitney(labels[rows], scores[rows])
+        wins_in, pairs_in = wins_in + wins, pairs_in + pairs
+    pairs_across = pairs_all - pairs_in
+    return {
+        "within": wins_in / pairs_in if pairs_in else float("nan"),
+        "across": (wins_all - wins_in) / pairs_across if pairs_across else float("nan"),
+        "across_share": pairs_across / pairs_all if pairs_all else float("nan"),
+    }
+
+
+def positive_episodes(labels, symbols):
+    """Runs of consecutive positive rows per symbol; rows arrive in date order per symbol."""
+    episodes = {}
+    for symbol in np.unique(symbols):
+        run = labels[symbols == symbol]
+        episodes[symbol] = int(((run == 1) & (np.r_[0, run[:-1]] == 0)).sum())
+    return episodes
+
+
+def _logit(p):
+    p = np.clip(np.asarray(p, float), 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
+
+
+def scored_window(meta, lookforward):
+    per_symbol = meta.groupby("symbol").agg(scored=("date", "size"), on_disk=("rows_on_disk", "first"))
+    return {
+        "first_scored": str(pd.Timestamp(meta["date"].min()).date()),
+        "last_scored": str(pd.Timestamp(meta["date"].max()).date()),
+        "rows_on_disk_per_symbol": int(per_symbol["on_disk"].median()),
+        "scored_rows_per_symbol": int(per_symbol["scored"].median()),
+        "non_overlapping_holds": int(per_symbol["scored"].median() // lookforward),
+    }
+
+
+def ranking_sources(detector, train_frames, swing_threshold, test_probabilities, test_labels, meta,
+                    validation_probabilities, validation_labels, validation_meta):
     symbols = meta["symbol"].to_numpy()
     model_within = per_symbol_aucs(test_labels, test_probabilities, symbols)
     train = baseline_training_rows(train_frames, swing_threshold, detector.lookforward_periods,
@@ -531,16 +610,50 @@ def ranking_sources(detector, train_frames, swing_threshold, test_probabilities,
             columns.append(((np.asarray(volatility, float) - mean) / spread).reshape(-1, 1))
         return np.hstack(columns)
 
-    baselines = {}
+    baselines, fitted_models = {}, {}
     for name, (use_ticker, use_volatility) in BASELINES.items():
         fitted = LogisticRegression(max_iter=1000).fit(
             design(train["symbol"], train["volatility"], use_ticker, use_volatility), train["label"])
+        fitted_models[name] = fitted
         scores = fitted.predict_proba(design(symbols, test_volatility, use_ticker, use_volatility))[:, 1]
         baselines[name] = {"pooled_auc": float(roc_auc_score(test_labels, scores)),
-                           "within_symbol": per_symbol_aucs(test_labels, scores, symbols)}
+                           "within_symbol": per_symbol_aucs(test_labels, scores, symbols),
+                           "pairs": pair_split(test_labels, scores, symbols), "scores": scores}
     model_auc = float(roc_auc_score(test_labels, test_probabilities))
     primary = baselines["ticker_volatility"]["pooled_auc"]
+    model_pairs = pair_split(test_labels, test_probabilities, symbols)
+
+    # Does the model add anything once the baseline is known?
+    baseline_scores = baselines["ticker_volatility"]["scores"]
+    edges = np.unique(np.quantile(baseline_scores, np.linspace(0, 1, DECILES + 1)))
+    decile = np.clip(np.searchsorted(edges, baseline_scores, side="right") - 1, 0, len(edges) - 2)
+    within_deciles = pair_split(test_labels, test_probabilities, decile)["within"]
+
+    validation_symbols = validation_meta["symbol"].to_numpy()
+    validation_baseline = fitted_models["ticker_volatility"].predict_proba(
+        design(validation_symbols, validation_meta["volatility"].fillna(mean), True, True))[:, 1]
+
+    def stacked(model_p, baseline_p, reference):
+        columns = np.column_stack([_logit(model_p), _logit(baseline_p)])
+        return (columns - reference.mean(axis=0)) / reference.std(axis=0)
+
+    reference = np.column_stack([_logit(validation_probabilities), _logit(validation_baseline)])
+    combination = LogisticRegression(max_iter=1000).fit(
+        stacked(validation_probabilities, validation_baseline, reference), validation_labels)
+    test_stacked = stacked(test_probabilities, baseline_scores, reference)
+    on_test = LogisticRegression(max_iter=1000).fit(test_stacked, test_labels)
+
+    # Rates diagnostic: does each ticker's positive rate on train predict its rate on test?
+    train_rates = train.groupby("symbol")["label"].mean()
+    test_rates = pd.Series(test_labels, index=symbols).groupby(level=0).mean()
+    shared = train_rates.index.intersection(test_rates.index)
+    ticker_rate_corr = (float(spearmanr(train_rates[shared], test_rates[shared]).correlation)
+                        if len(shared) > 2 else float("nan"))
+
+    episodes = positive_episodes(test_labels, symbols)
+    with_positives = [count for count in episodes.values() if count]
     return {
+        # First T10, specified before any of it was computed.
         "model_auc_pooled": model_auc,
         "model_auc_within_mean": float(np.mean(model_within)) if model_within else float("nan"),
         "model_auc_within_min": float(np.min(model_within)) if model_within else float("nan"),
@@ -552,10 +665,30 @@ def ranking_sources(detector, train_frames, swing_threshold, test_probabilities,
         "baseline_ticker_volatility_auc": primary,
         "baseline_within_mean": (float(np.mean(baselines["ticker_volatility"]["within_symbol"]))
                                  if baselines["ticker_volatility"]["within_symbol"] else float("nan")),
-        "baseline_share_of_model_lift": (primary - 0.5) / (model_auc - 0.5) if model_auc != 0.5 else float("nan"),
+        "baseline_lift_over_model_lift": (primary - 0.5) / (model_auc - 0.5) if model_auc != 0.5 else float("nan"),
         "test_symbols_unseen_in_train": int(len(set(symbols) - set(known))),
         "test_rows_missing_volatility": missing_volatility,
         "baseline_train_rows": int(len(train)),
+        # Added after review.
+        "model_auc_within_pairs": model_pairs["within"],
+        "model_auc_across_pairs": model_pairs["across"],
+        "cross_symbol_pair_share": model_pairs["across_share"],
+        "ticker_volatility_auc_within_pairs": baselines["ticker_volatility"]["pairs"]["within"],
+        "volatility_auc_within_pairs": baselines["volatility"]["pairs"]["within"],
+        "symbols_without_positives": int(sum(1 for count in episodes.values() if count == 0)),
+        "positive_episodes_total": int(sum(with_positives)),
+        "positive_episodes_median": float(np.median(with_positives)) if with_positives else float("nan"),
+        "positive_episodes_max": int(max(with_positives)) if with_positives else 0,
+        "model_auc_within_baseline_deciles": within_deciles,
+        "baseline_deciles": int(len(edges) - 1),
+        "model_coef_validation": float(combination.coef_[0][0]),
+        "baseline_coef_validation": float(combination.coef_[0][1]),
+        "model_coef_test": float(on_test.coef_[0][0]),
+        "baseline_coef_test": float(on_test.coef_[0][1]),
+        "combined_auc_test": float(roc_auc_score(test_labels, combination.predict_proba(test_stacked)[:, 1])),
+        "ticker_rate_rank_corr_train_test": ticker_rate_corr,
+        "scored_window_test": scored_window(meta, detector.lookforward_periods),
+        "scored_window_validation": scored_window(validation_meta, detector.lookforward_periods),
     }
 
 
@@ -699,8 +832,11 @@ def evaluate_category(category, splits, out, folds):
 
     test_probabilities, test_labels, test_meta = labeled_rows(detector, splits["test"], swing_threshold)
     test_classification = classification(test_probabilities, test_labels)
+    validation_probabilities, validation_labels, validation_meta = labeled_rows(
+        detector, splits["validation"], swing_threshold)
     ranking = ranking_sources(detector, splits["train"], swing_threshold, test_probabilities,
-                              test_labels, test_meta)
+                              test_labels, test_meta, validation_probabilities, validation_labels,
+                              validation_meta)
 
     result = {
         "category": category,
@@ -1034,11 +1170,15 @@ def figure_ranking_sources(results, out):
     if not rows:
         return
     rows = sorted(rows, key=lambda r: r["ranking_sources"]["model_auc_pooled"])
-    fig, ax = plt.subplots(figsize=(5.6, 0.34 * len(rows) + 1.6))
+    fig, ax = plt.subplots(figsize=(6.0, 0.34 * len(rows) + 1.9))
     y = np.arange(len(rows))
+    # The reviewer's split: pure sorting (ticker only) against regime timing (the
+    # ticker-and-volatility baseline's same-symbol pairs), beside the model's own two parts.
     series = [("model_auc_pooled", "model, pooled (T6)", BLUE, "o"),
-              ("model_auc_within_mean", "model, within symbol (mean)", ORANGE, "s"),
-              ("baseline_ticker_volatility_auc", "ticker + volatility baseline, pooled", AQUA, "D")]
+              ("model_auc_within_pairs", "model, same-symbol pairs", ORANGE, "s"),
+              ("baseline_ticker_auc", "ticker only, pooled (sorting)", AQUA, "D"),
+              ("ticker_volatility_auc_within_pairs", "ticker + volatility, same-symbol pairs (timing)",
+               "#eda100", "^")]
     for key, label, color, marker in series:
         ax.scatter([r["ranking_sources"][key] for r in rows], y, color=color, marker=marker, s=32,
                    label=label, zorder=3, edgecolor="white", linewidth=0.8)
@@ -1046,11 +1186,11 @@ def figure_ranking_sources(results, out):
     ax.set_yticks(y)
     ax.set_yticklabels([r["category"].replace("_", " ") for r in rows])
     ax.set_ylim(-0.6, len(rows) - 0.4)
-    ax.set_xlim(0.3, 1.0)
+    ax.set_xlim(0.2, 1.0)
     ax.set_xlabel("Test ROC-AUC (0.5 = random)")
     ax.set_title("How much of the ranking is just telling symbols apart?")
     fig.legend(loc="lower center", fontsize=7.5, ncol=2)
-    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.tight_layout(rect=(0, 0.15, 1, 1))
     _save(fig, out, "fig8_ranking_sources")
 
 
@@ -1255,25 +1395,75 @@ def _write_tables(out, run, universe, labels_frame, horizons, results, folds, bo
         "Only categories with a validation floor have a rule to test; the rest are in T7.",
     ] + disclosures)
 
-    tables.add("T10", "Where the ranking comes from: within-symbol AUC and a ticker-and-volatility baseline",
-               pd.DataFrame([{"category": r["category"], **r["ranking_sources"]} for r in results]), {
-        "model_auc_pooled": "f3", "model_auc_within_mean": "f3", "model_auc_within_min": "f3",
-        "model_auc_within_max": "f3", "baseline_ticker_auc": "f3", "baseline_volatility_auc": "f3",
-        "baseline_ticker_volatility_auc": "f3", "baseline_within_mean": "f3",
-        "baseline_share_of_model_lift": "f2"}, [
-        "Same test rows as T6. model_auc_pooled is T6's test ROC-AUC. model_auc_within_* are "
-        "each symbol's own ROC-AUC, averaged without weights over the symbols whose test rows "
-        "hold both outcomes (symbols_both_classes of symbols_scored). Sorting symbols from one "
-        "another contributes nothing to them.",
-        f"Baselines are logistic regressions fit on train/ with the same labels: ticker (one-hot "
-        f"symbol only), volatility ({VOLATILITY_WINDOW}-session realized volatility only), and "
-        "ticker_volatility (both; the primary comparison). baseline_within_mean is the "
-        "ticker_volatility baseline's within-symbol AUC.",
-        "baseline_share_of_model_lift = (baseline_ticker_volatility_auc - 0.5) / "
-        "(model_auc_pooled - 0.5): the share of the model's pooled lift above random that a "
-        "model knowing only the ticker and its recent volatility also achieves.",
-        "Both checks were fixed before either was computed. The rows overlap by up to 99% of "
-        "their outcome window, so, as in T6, no standard errors are attached.",
+    ranking = pd.DataFrame([{"category": r["category"], **{k: v for k, v in r["ranking_sources"].items()
+                                                           if not k.startswith("scored_window")}}
+                            for r in results])
+    auc = {c: "f3" for c in ranking.columns if "auc" in c or "coef" in c or c.endswith("_corr_train_test")}
+    tables.add("T10", "Where the ranking comes from: within-symbol and cross-symbol pairs", ranking[[
+        "category", "model_auc_pooled", "cross_symbol_pair_share", "model_auc_across_pairs",
+        "model_auc_within_pairs", "model_auc_within_mean", "model_auc_within_min",
+        "model_auc_within_max", "symbols_scored", "symbols_both_classes",
+        "symbols_without_positives", "positive_episodes_total", "positive_episodes_median",
+        "positive_episodes_max"]], {**auc, "cross_symbol_pair_share": "pct",
+                                    "positive_episodes_median": "f2"}, [
+        "Same test rows as T6. model_auc_pooled is T6's test ROC-AUC. It is the pair-weighted "
+        "average of two parts: pairs of a positive and a negative row from different symbols "
+        "(cross_symbol_pair_share of all pairs, scored model_auc_across_pairs), which a sort of "
+        "symbols by volatility can win without timing anything, and pairs from the same symbol "
+        "(model_auc_within_pairs), which only timing can win.",
+        "model_auc_within_pairs counts every same-symbol pair once, so a symbol with one positive "
+        "episode weighs by its pairs, not as a full vote. model_auc_within_mean/min/max are the "
+        "unweighted per-symbol AUCs from the first version of this table, kept for comparison.",
+        "positive_episodes_* count runs of consecutive positive rows per symbol, over symbols with "
+        "at least one; symbols_without_positives have none in test, and every pair involving "
+        "them is cross-symbol.",
+        "The first version of this table was specified before it was computed; the pair split, "
+        "episode counts and T11-T12 were added after review, with the test window already seen. "
+        "No standard errors: the rows overlap by up to 99% of their outcome window.",
+    ])
+    tables.add("T11", "Baselines, and whether the model adds anything once they are known", ranking[[
+        "category", "model_auc_pooled", "baseline_ticker_auc", "baseline_volatility_auc",
+        "baseline_ticker_volatility_auc", "baseline_lift_over_model_lift",
+        "ticker_volatility_auc_within_pairs", "volatility_auc_within_pairs",
+        "ticker_rate_rank_corr_train_test", "model_auc_within_baseline_deciles", "baseline_deciles",
+        "model_coef_validation", "baseline_coef_validation", "model_coef_test", "baseline_coef_test",
+        "combined_auc_test", "test_symbols_unseen_in_train"]],
+        {**auc, "baseline_lift_over_model_lift": "f2"}, [
+        f"Baselines are logistic regressions fit on train/ with the same labels: baseline_ticker "
+        f"(one-hot symbol only -- pure sorting; within a symbol it cannot rank at all), "
+        f"baseline_volatility ({VOLATILITY_WINDOW}-session realized volatility only), and "
+        f"baseline_ticker_volatility (both). *_auc_within_pairs is a baseline's same-symbol, "
+        f"pair-weighted AUC: how far volatility times regimes inside a symbol.",
+        "baseline_lift_over_model_lift = (baseline_ticker_volatility_auc - 0.5) / "
+        "(model_auc_pooled - 0.5). It is not a share of the model's skill: AUC lifts do not add, "
+        "the two may rank on different information, and the ratio is unstable when the model is "
+        "near 0.5. The baseline is also not the best trivial ranker -- where "
+        "baseline_volatility beats it, adding ticker dummies cost AUC -- so read it as a lower "
+        "bound on what trivial information achieves.",
+        "ticker_rate_rank_corr_train_test: Spearman correlation, across symbols, of each "
+        "symbol's positive rate on train against test. Near zero or negative means ticker "
+        "effects learned on train point elsewhere on test.",
+        "model_auc_within_baseline_deciles: the model's AUC counting only pairs whose rows fall "
+        "in the same decile of the ticker-and-volatility score (baseline_deciles bins after "
+        "merging tied edges). 0.5 means nothing beyond the baseline.",
+        "model_coef_* and baseline_coef_*: standardized coefficients of a logistic regression "
+        "on the two scores' log-odds, fit on validation (*_validation) and, separately, on test "
+        "(*_test). combined_auc_test scores test with the validation fit. No standard errors.",
+        "Added after review; the test window had already been seen.",
+    ])
+    windows = []
+    for r in results:
+        for split in ("validation", "test"):
+            windows.append({"category": r["category"], "split": split,
+                            **r["ranking_sources"][f"scored_window_{split}"]})
+    tables.add("T12", "Scored windows: rows on disk against rows actually scored", pd.DataFrame(windows), {}, [
+        "Each split file is scored on its own, so its first rows go to feature warm-up (the "
+        "200-session averages and their slopes need 204 rows), and its last "
+        f"{DEFAULT_LOOKFORWARD_PERIODS} rows have no complete outcome window. first_scored and "
+        "last_scored bound the rows with both; non_overlapping_holds is scored rows per symbol "
+        f"divided by {DEFAULT_LOOKFORWARD_PERIODS}.",
+        "Trades can be entered only on scored rows, so these, not T1's row counts, are the window "
+        "any evidence count should use. Added after review.",
     ])
 
     if folds:
