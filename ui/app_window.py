@@ -34,8 +34,7 @@ DEFAULT_US_SYMBOL = "AAPL"
 
 FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
-# Same dark palette as docs/index.html's dark theme (styles.css), so the desktop terminal
-# and the promotional site read as the same product instead of two different designs.
+# Dark palette for the desktop terminal.
 COLORS = {
     "bg": "#0A0E0B", "bg_top": "#10140F", "bg_bottom": "#0A0E0B",
     "panel": "#141A16", "panel_alt": "#1C231D", "border": "#263025", "shadow": "#000000",
@@ -548,9 +547,8 @@ class TradingTerminalWindow(QtWidgets.QMainWindow):
 
 
 def load_fonts():
-    """Registers the same typefaces docs/index.html embeds (IBM Plex Sans/Mono,
-    Spectral) so the desktop terminal and the promotional site match instead of one
-    of them silently falling back to a generic system font. Missing/unreadable files
+    """Registers the bundled typefaces in ui/fonts/ (IBM Plex Sans/Mono, Spectral) so
+    the desktop terminal doesn't silently fall back to a generic system font. Missing/unreadable files
     are skipped rather than raised -- a font that fails to load just means apply_theme's
     "IBM Plex Sans"/"IBM Plex Mono"/"Spectral" QSS references fall back to the next
     family in their chain, not a crash."""
