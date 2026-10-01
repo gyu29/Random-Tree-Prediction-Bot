@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "paper" / "web" / "paper_src.html"
+LOGO = ROOT / "paper" / "web" / "logo.png"
 FIGURES = ROOT / "paper" / "results" / "figures"
 OUT = ROOT / "docs" / "paper"
 
@@ -43,6 +44,8 @@ CHROME_CANDIDATES = [
 
 def build_html() -> Path:
     html = SRC.read_text(encoding="utf-8")
+    logo = base64.b64encode(LOGO.read_bytes()).decode("ascii")
+    html = html.replace("{{logo}}", "data:image/png;base64," + logo)
     for key, name in FIGURE_FILES.items():
         data = base64.b64encode((FIGURES / name).read_bytes()).decode("ascii")
         html = html.replace("{{%s}}" % key, "data:image/png;base64," + data)

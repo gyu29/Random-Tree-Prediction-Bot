@@ -6,6 +6,7 @@
 <title>How Much Evidence Does a Backtest Really Have?</title>
 <meta name="description" content="A random forest plus XGBoost ensemble ranks ETF returns well out of sample, yet no trading rule beats ignoring the model by 2 standard errors. The limit is the amount of independent evidence, not the model.">
 <meta name="author" content="Gene Yu">
+<link rel="icon" type="image/png" href="{{logo}}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
@@ -84,6 +85,7 @@ sub { font-size: 0.7em; }
   padding: 72px 16px 56px;
 }
 .masthead-inner { max-width: 1120px; margin: 0 auto; }
+.logo { display: block; width: 64px; height: auto; border-radius: 12px; margin: 0 0 28px; }
 .kicker {
   font-family: var(--sans);
   font-size: 13px;
@@ -347,6 +349,7 @@ footer .inner { max-width: 1120px; margin: 0 auto; display: flex; flex-wrap: wra
 
 <header class="masthead">
   <div class="masthead-inner">
+    <img class="logo" src="{{logo}}" alt="Site logo" width="64" height="60">
     <p class="kicker">Research paper &middot; Quantitative finance</p>
     <h1>How Much Evidence Does a Backtest Really&nbsp;Have?</h1>
     <div class="byline">
