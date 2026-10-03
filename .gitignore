@@ -31,3 +31,7 @@ CLAUDE.MD
 
 # Cached market context series (rebuild with scripts/build_factor_datasets.py)
 /market_context.csv
+
+# Wrangler (paper/web)
+node_modules/
+.wrangler/

@@ -11,7 +11,7 @@ reason the three-way split exists.
 
 Why not "best validation Sharpe among thresholds with >=5 trades", the rule this
 script used to apply: it repeatedly picked the thinnest sample on offer.
-docs/2026-08-24-calibration-investigation.md
+paper/archive/2026-08-24-calibration-investigation.md
 records inflation_safe_haven's naive argmax landing on
 5 validation trades with a Sharpe of 4.13 -- not a credible number at that size -- and
 small_cap's pick looking fine on validation (+7.6%) before losing money on test

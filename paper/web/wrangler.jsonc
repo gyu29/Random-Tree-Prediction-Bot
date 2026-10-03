@@ -1,0 +1,16 @@
+// Cloudflare Workers config for the paper's web page. There is no Worker script:
+// Cloudflare serves the files in public/ as static assets.
+//
+//   npm install          # once, installs Wrangler
+//   npx wrangler login   # once, links Wrangler to your Cloudflare account
+//   npm run deploy       # rebuilds public/ with build.py, then runs wrangler deploy
+//
+// `npx wrangler deploy` on its own uploads public/ as it is, without rebuilding.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "backtest-evidence",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": "./public"
+  }
+}

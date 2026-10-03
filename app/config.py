@@ -200,7 +200,7 @@ SYMBOL_TO_CATEGORY = {
 # qualified and those models learned to never predict a positive at all. Each override
 # below puts its category's positive-label rate in the 2-8% band that the two
 # categories needing no override (growth_tech 7.3%, energy_commodity 1.8%) sit in
-# naturally. See docs/2026-08-24-calibration-investigation.md for the investigation that found this,
+# naturally. See paper/archive/2026-08-24-calibration-investigation.md for the investigation that found this,
 # bearing in mind it predates the current split, feature set and universe.
 #
 # decision_threshold only converts a predicted probability into a trade, so it can be

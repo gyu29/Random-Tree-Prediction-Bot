@@ -1,11 +1,15 @@
 """Build the paper's web page and PDF from paper_src.html and the paper run's figures.
 
-    python paper/web/build.py            # docs/paper/index.html and docs/paper/paper.pdf
+    python paper/web/build.py            # paper/web/public/index.html and paper.pdf
     python paper/web/build.py --no-pdf   # index.html only
 
 Figures are read from paper/results/figures/ (written by scripts/paper_run.py) and
 inlined, so index.html is one self-contained file. The PDF is printed from that page
-with headless Chrome, using the page's print stylesheet.
+with headless Chrome, using the page's print stylesheet; the ?print query tells the
+page's script to skip its animations so nothing is caught mid-transition.
+
+public/ is exactly what Cloudflare serves (see wrangler.jsonc): the two generated
+files plus logo.png and _headers, which are edited by hand.
 """
 
 import argparse
@@ -18,9 +22,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "paper" / "web" / "paper_src.html"
-LOGO = ROOT / "paper" / "web" / "logo.png"
 FIGURES = ROOT / "paper" / "results" / "figures"
-OUT = ROOT / "docs" / "paper"
+OUT = ROOT / "paper" / "web" / "public"
 
 # Paper figure number -> paper_run.py figure file. The paper orders figures by where
 # they are discussed, which is not the order paper_run.py writes them in.
@@ -44,15 +47,12 @@ CHROME_CANDIDATES = [
 
 def build_html() -> Path:
     html = SRC.read_text(encoding="utf-8")
-    logo = base64.b64encode(LOGO.read_bytes()).decode("ascii")
-    html = html.replace("{{logo}}", "data:image/png;base64," + logo)
     for key, name in FIGURE_FILES.items():
         data = base64.b64encode((FIGURES / name).read_bytes()).decode("ascii")
         html = html.replace("{{%s}}" % key, "data:image/png;base64," + data)
     leftover = re.findall(r"\{\{[a-z0-9_]+\}\}", html)
     if leftover:
         sys.exit(f"unfilled placeholders: {sorted(set(leftover))}")
-    OUT.mkdir(parents=True, exist_ok=True)
     out = OUT / "index.html"
     out.write_text(html, encoding="utf-8")
     return out
@@ -76,7 +76,7 @@ def build_pdf(page: Path) -> Path:
             "--no-pdf-header-footer",
             "--virtual-time-budget=15000",
             f"--print-to-pdf={pdf}",
-            page.as_uri(),
+            page.as_uri() + "?print",
         ],
         check=True,
         capture_output=True,

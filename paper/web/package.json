@@ -1,0 +1,13 @@
+{
+  "name": "backtest-evidence-paper",
+  "private": true,
+  "description": "The paper's web page, served as static assets on Cloudflare Workers",
+  "scripts": {
+    "build": "python3 build.py",
+    "dev": "wrangler dev",
+    "deploy": "python3 build.py && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
+  }
+}
