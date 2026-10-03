@@ -367,21 +367,43 @@ body { -webkit-font-smoothing: antialiased; }
 html { scroll-padding-top: 76px; }
 .toc { top: 80px; max-height: calc(100vh - 104px); }
 
-/* hero */
-.masthead { position: relative; overflow: hidden; padding-top: 128px; }
-.masthead-inner { position: relative; }
-.hero-canvas {
-  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
-  -webkit-mask-image: linear-gradient(90deg, transparent 28%, #000 72%);
-  mask-image: linear-gradient(90deg, transparent 28%, #000 72%);
+/* hero: overlapping holding windows */
+.masthead { padding-top: 128px; }
+@media (min-width: 980px) {
+  .masthead-inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 56px; align-items: center; }
 }
-.hero-note {
-  display: flex; align-items: center; gap: 8px; margin: 32px 0 0;
-  font-family: var(--sans); font-size: 12.5px; line-height: 1.4; color: var(--text-faint);
+.hero-fig { margin: 40px 0 0; max-width: 520px; }
+@media (min-width: 980px) { .hero-fig { margin: 0; } }
+.hero-fig svg { display: block; width: 100%; height: auto; overflow: visible; }
+.hero-fig .tr {
+  fill: none; stroke: var(--text-faint); stroke-opacity: .42; stroke-width: 2; stroke-linecap: round;
+  stroke-dasharray: var(--len); stroke-dashoffset: var(--len);
+  transition: stroke-dashoffset .55s cubic-bezier(.2,.7,.2,1), stroke-opacity .35s, stroke .35s;
 }
-.hero-note::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
-@media (max-width: 760px) {
-  .hero-canvas { opacity: .32; -webkit-mask-image: none; mask-image: none; }
+.hero-fig .tr.ind { stroke: var(--signal); stroke-opacity: .95; }
+.hero-fig.drawn .tr { stroke-dashoffset: 0; }
+.hero-fig .lane { opacity: 0; transform: translateY(-6px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); }
+.hero-fig.landed .lane { opacity: 1; transform: none; }
+.hero-fig .lane-base { stroke: var(--border); stroke-width: 1; }
+.hero-fig .lane path { fill: none; stroke: var(--signal); stroke-width: 3; stroke-linecap: round; }
+.hero-fig .lane circle { fill: var(--paper); stroke: var(--signal); stroke-width: 1.5; }
+.hero-fig text { font-family: var(--sans); font-size: 13.5px; fill: var(--text-faint); }
+.hero-fig text .n { fill: var(--text); font-weight: 600; }
+.hero-fig text .n.sig { fill: var(--signal); }
+.hero-fig .cursor { opacity: 0; pointer-events: none; }
+.hero-fig .cursor line { stroke: var(--text-soft); stroke-width: 1; stroke-dasharray: 2 3; }
+.hero-fig .cursor text { fill: var(--text); font-weight: 600; }
+.hero-fig.scan .tr { stroke-opacity: .24; }
+.hero-fig.scan .tr.on { stroke-opacity: .9; stroke: var(--text-soft); }
+.hero-fig.scan .tr.ind { stroke-opacity: .55; }
+.hero-fig.scan .tr.ind.on { stroke: var(--signal); stroke-opacity: 1; }
+.hero-fig .lane path { transition: stroke-width .35s; }
+.hero-fig .lane circle { transition: fill .35s; }
+.hero-fig .lane path.on { stroke-width: 4.5; }
+.hero-fig .lane circle.on { fill: var(--signal); }
+.hero-fig figcaption { font-family: var(--sans); font-size: 12.5px; line-height: 1.5; color: var(--text-faint); margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-fig .tr, .hero-fig .lane { transition: none; }
 }
 
 /* stats */
@@ -549,7 +571,7 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
   .bar-fill, .gauge-fill, .lightbox[open] { transition: none; animation: none; }
 }
 @media print {
-  .topbar, .hero-canvas, .hero-note, .lightbox, .anchor, .sort-ind, .zoom-hint, .no-print { display: none !important; }
+  .topbar, .hero-fig, .lightbox, .anchor, .sort-ind, .zoom-hint, .no-print { display: none !important; }
   .reveal { opacity: 1 !important; transform: none !important; }
   .masthead { padding-top: 0; }
   figure .frame { box-shadow: none !important; }
@@ -612,8 +634,8 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
 </dialog>
 
 <header class="masthead" id="top">
-  <canvas class="hero-canvas" aria-hidden="true"></canvas>
   <div class="masthead-inner">
+    <div>
     <p class="kicker">Research paper &middot; Quantitative finance</p>
     <h1>How Much Evidence Does a Backtest Really&nbsp;Have?</h1>
     <div class="byline">
@@ -624,7 +646,11 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
         <a class="btn" href="https://github.com/gyu29/Random-Tree-Prediction-Bot">Code &amp; data on GitHub</a>
       </span>
     </div>
-    <p class="hero-note">Each dot is a trade. Overlapping, correlated trades collapse into far fewer independent outcomes.</p>
+    </div>
+    <figure class="hero-fig" id="hero-fig">
+      <svg role="img" aria-label="Illustration: dozens of overlapping trade holding windows, of which only a handful do not overlap."></svg>
+      <figcaption>Each grey line is one trade's 3–6 month hold, opened every few days, so they overlap. Only trades whose windows don't overlap are independent of each other. The moving line counts how many trades are open on each day.</figcaption>
+    </figure>
   </div>
 </header>
 
@@ -1325,85 +1351,108 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
     });
   }
 
-  /* ---- hero: many trades collapse into a few independent outcomes ---- */
-  var cv = $('.hero-canvas');
-  if (cv && cv.getContext && !PRINT) hero(cv);
-  function hero(cv) {
-    var ctx = cv.getContext('2d');
-    var N = 640, K = 54, PERIOD = 12000;
-    var W = 0, H = 0, dots = [], clusters = [], col = {}, cycle = -1, running = false, onScreen = true;
-    function rnd(a, b) { return a + Math.random() * (b - a); }
-    function colors() {
-      var cs = getComputedStyle(root);
-      col.dot = cs.getPropertyValue('--text-faint').trim() || '#7E8579';
-      col.sig = cs.getPropertyValue('--signal').trim() || '#0E7A70';
+  /* ---- hero: overlapping holding windows, and the few that are independent ---- */
+  var heroFig = $('#hero-fig');
+  if (heroFig) hero(heroFig);
+  function hero(fig) {
+    var svg = $('svg', fig), NS = 'http://www.w3.org/2000/svg';
+    var W = 520, ROWS = 14, ROW_H = 13, TOP = 30, DX = 7;
+    var rowsEnd = TOP + (ROWS - 1) * ROW_H, cursorY = rowsEnd + 22, laneLabelY = rowsEnd + 46, laneY = rowsEnd + 62;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (laneY + 8));
+    function el(name, attrs, parent) {
+      var e = document.createElementNS(NS, name);
+      for (var k in attrs) e.setAttribute(k, attrs[k]);
+      (parent || svg).appendChild(e);
+      return e;
     }
-    function layout() {
-      var r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
-      W = r.width; H = r.height;
-      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      var x0 = W > 760 ? 0.4 : 0.03;
-      clusters = [];
-      for (var k = 0; k < K; k++) clusters.push({ x: rnd(x0, 0.97) * W, y: rnd(0.12, 0.9) * H });
-      dots = [];
-      for (var i = 0; i < N; i++) {
-        var c = clusters[i % K], a = rnd(0, 6.283), rr = Math.sqrt(Math.random()) * 7;
-        dots.push({ tx: c.x + Math.cos(a) * rr, ty: c.y + Math.sin(a) * rr,
-          ax: rnd(0, 1) * W, ay: rnd(0.03, 0.97) * H, bx: rnd(0, 1) * W, by: rnd(0.03, 0.97) * H, ph: rnd(0, 6.283) });
-      }
-    }
-    function ease(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
-    function draw(t, fixedP) {
-      var u = (t % PERIOD) / PERIOD, n = Math.floor(t / PERIOD), p, fromB = false;
-      if (n !== cycle) { // new cycle: scatter from where the last one dispersed to
-        if (cycle !== -1) dots.forEach(function (d) { d.ax = d.bx; d.ay = d.by; d.bx = rnd(0, 1) * W; d.by = rnd(0.03, 0.97) * H; });
-        cycle = n;
-      }
-      if (fixedP !== undefined) p = fixedP;
-      else if (u < 0.12) p = 0;
-      else if (u < 0.45) p = ease((u - 0.12) / 0.33);
-      else if (u < 0.75) p = 1;
-      else { p = 1 - ease((u - 0.75) / 0.25); fromB = true; }
-      ctx.clearRect(0, 0, W, H);
-      var drift = (1 - p) * 4;
-      var pos = dots.map(function (d) {
-        var sx = fromB ? d.bx : d.ax, sy = fromB ? d.by : d.ay;
-        return [sx + (d.tx - sx) * p + Math.sin(t / 1700 + d.ph) * drift,
-                sy + (d.ty - sy) * p + Math.cos(t / 1900 + d.ph) * drift];
+    function label(x, y, anchor, parts, parent) {
+      var t = el('text', { x: x, y: y, 'text-anchor': anchor }, parent);
+      parts.forEach(function (p) {
+        var ts = el('tspan', p[1] ? { 'class': p[1] } : {}, t);
+        ts.textContent = p[0];
       });
-      function pass(color, alpha, r) {
-        if (alpha <= 0.01) return;
-        ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.beginPath();
-        pos.forEach(function (q) { ctx.moveTo(q[0] + r, q[1]); ctx.arc(q[0], q[1], r, 0, 6.283); });
-        ctx.fill();
-      }
-      pass(col.dot, 0.55 * (1 - p), 1.6);
-      pass(col.sig, 0.8 * p, 1.6);
-      var halo = Math.max(0, (p - 0.6) / 0.4);
-      if (halo > 0) {
-        ctx.globalAlpha = 0.45 * halo; ctx.strokeStyle = col.sig; ctx.lineWidth = 1.2; ctx.beginPath();
-        clusters.forEach(function (c) { ctx.moveTo(c.x + 12, c.y); ctx.arc(c.x, c.y, 12, 0, 6.283); });
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
+      return t;
     }
-    function frame(t) {
+    // Fixed seed: the same picture on every load.
+    var seed = 20260930;
+    function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    // A trade opens every DX units and is held 60-96; rows repeat every ROWS * DX = 98, so lines in a row never touch.
+    var trades = [];
+    for (var x = 0, k = 0; x < W; x += DX, k++) {
+      var len = 60 + rnd() * 36;
+      trades.push({ x0: x, x1: x + len, y: TOP + (k % ROWS) * ROW_H });
+    }
+    var complete = trades.filter(function (t) { return t.x1 <= W; });
+    var ind = [], end = -Infinity;
+    complete.forEach(function (t) { if (t.x0 >= end) { ind.push(t); end = t.x1; } });
+
+    label(0, 12, 'start', [['Trades opened every few days']]);
+    label(W, 12, 'end', [[String(complete.length), 'n'], [' trades']]);
+    trades.forEach(function (t) {
+      var x1 = Math.min(W, t.x1);
+      t.el = el('path', { d: 'M' + t.x0.toFixed(1) + ' ' + t.y + 'H' + x1.toFixed(1),
+        'class': 'tr' + (ind.indexOf(t) >= 0 ? ' ind' : '') });
+      t.el.style.setProperty('--len', (x1 - t.x0 + 1).toFixed(1) + 'px');
+      t.el.style.transitionDelay = (t.x0 / W * 0.9).toFixed(3) + 's';
+    });
+    var lane = el('g', { 'class': 'lane' });
+    label(0, laneLabelY, 'start', [['Non-overlapping, so independent']], lane);
+    label(W, laneLabelY, 'end', [[String(ind.length), 'n sig'], [' independent']], lane);
+    el('line', { x1: 0, x2: W, y1: laneY, y2: laneY, 'class': 'lane-base' }, lane);
+    ind.forEach(function (t) {
+      t.lane = [
+        el('path', { d: 'M' + (t.x0 + 3).toFixed(1) + ' ' + laneY + 'H' + (t.x1 - 3).toFixed(1) }, lane),
+        el('circle', { cx: (t.x0 + 3).toFixed(1), cy: laneY, r: 3 }, lane),
+        el('circle', { cx: (t.x1 - 3).toFixed(1), cy: laneY, r: 3 }, lane)
+      ];
+    });
+
+    var cursor = el('g', { 'class': 'cursor' });
+    var cLine = el('line', { y1: TOP - 7, y2: rowsEnd + 7 }, cursor);
+    var cText = el('text', { y: cursorY, 'text-anchor': 'middle' }, cursor);
+    // The cursor sweeps left to right on its own, counting the trades open on each day.
+    var SWEEP = 11000, EDGE = 36, lastOpen = -1;
+    function scanTo(x) {
+      var open = 0;
+      trades.forEach(function (t) {
+        var on = t.x0 <= x && x < t.x1;
+        if (on) open++;
+        if (t.on === on) return;
+        t.on = on;
+        t.el.classList.toggle('on', on);
+        if (t.lane) t.lane.forEach(function (e) { e.classList.toggle('on', on); });
+      });
+      cLine.setAttribute('x1', x); cLine.setAttribute('x2', x);
+      cText.setAttribute('x', Math.max(34, Math.min(W - 34, x)));
+      if (open !== lastOpen) { cText.textContent = open + ' open'; lastOpen = open; }
+      // Fade in at the left edge and out at the right, so the wrap-around is not a jump.
+      cursor.style.opacity = Math.max(0, Math.min(1, x / EDGE, (W - x) / EDGE)).toFixed(3);
+    }
+    var running = false, onScreen = true, started = false, t0 = null;
+    function frame(ts) {
       if (!running) return;
-      draw(t);
+      if (t0 === null) t0 = ts;
+      scanTo(((ts - t0) % SWEEP) / SWEEP * W);
       requestAnimationFrame(frame);
     }
     function update() {
-      var go = !REDUCED && onScreen && !document.hidden;
-      if (go && !running) { running = true; requestAnimationFrame(frame); }
+      var go = started && onScreen && !document.hidden;
+      if (go && !running) { running = true; t0 = null; requestAnimationFrame(frame); }
       if (!go) running = false;
     }
-    colors(); layout();
-    if (REDUCED) draw(0, 1); else update();
-    if (window.ResizeObserver) new ResizeObserver(function () { layout(); if (REDUCED) draw(0, 1); }).observe(cv);
-    document.addEventListener('themechange', function () { colors(); if (REDUCED) draw(0, 1); });
+
+    function finish() { fig.classList.add('drawn'); fig.classList.add('landed'); }
+    if (PRINT || REDUCED) { finish(); return; }
+    svg.getBoundingClientRect(); // commit the undrawn state so the transition runs
+    setTimeout(function () { fig.classList.add('drawn'); }, 120);
+    setTimeout(function () {
+      fig.classList.add('landed');
+      fig.classList.add('scan');
+      started = true;
+      update();
+    }, 1600);
     document.addEventListener('visibilitychange', update);
-    if (HAS_IO) new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; update(); }).observe(cv);
+    if (HAS_IO) new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; update(); }).observe(svg);
   }
 
   /* ---- figures open in a lightbox ---- */
