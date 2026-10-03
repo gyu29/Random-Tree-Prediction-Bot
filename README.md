@@ -235,7 +235,7 @@ npx wrangler login     # once: links Wrangler to your Cloudflare account
 npm run deploy         # build.py, then wrangler deploy
 ```
 
-`npm run deploy` rebuilds `public/` before uploading it; plain `npx wrangler deploy` uploads `public/` as it is. `npx wrangler dev` serves it locally. The Worker's name, `backtest-evidence`, is set in `wrangler.jsonc` and decides the `*.workers.dev` address.
+`npm run deploy` rebuilds `public/` before uploading it; plain `npx wrangler deploy` uploads `public/` as it is. `npx wrangler dev` serves it locally. The Worker's name, `proud-moon-b1cb`, is set in `wrangler.jsonc` and decides the `*.workers.dev` address.
 
 ## Desktop UI
 
