@@ -368,42 +368,44 @@ html { scroll-padding-top: 76px; }
 .toc { top: 80px; max-height: calc(100vh - 104px); }
 
 /* hero: overlapping holding windows */
-.masthead { padding-top: 128px; }
+.masthead { padding-top: 128px; overflow: hidden; }
 @media (min-width: 980px) {
-  .masthead-inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 56px; align-items: center; }
+  /* The title keeps the page's left edge; the chart takes the rest and runs up to 120px past the right one. */
+  .masthead-inner {
+    display: grid; grid-template-columns: minmax(0, 600px) minmax(400px, 1fr); gap: 48px; align-items: center;
+    max-width: none; margin: 0;
+    padding-left: max(0px, calc((100% - 1120px) / 2));
+    padding-right: max(0px, calc((100% - 1120px) / 2 - 120px));
+  }
 }
 .hero-fig { margin: 40px 0 0; max-width: 520px; }
-@media (min-width: 980px) { .hero-fig { margin: 0; } }
-.hero-fig svg { display: block; width: 100%; height: auto; overflow: visible; }
+@media (min-width: 980px) { .hero-fig { margin: 0; max-width: none; } }
+.hero-fig svg { display: block; width: 100%; height: auto; overflow: visible; pointer-events: none; }
 .hero-fig .tr {
   fill: none; stroke: var(--text-faint); stroke-opacity: .42; stroke-width: 2; stroke-linecap: round;
   stroke-dasharray: var(--len); stroke-dashoffset: var(--len);
   transition: stroke-dashoffset .55s cubic-bezier(.2,.7,.2,1), stroke-opacity .35s, stroke .35s;
 }
-.hero-fig .tr.ind { stroke: var(--signal); stroke-opacity: .95; }
 .hero-fig.drawn .tr { stroke-dashoffset: 0; }
-.hero-fig .lane { opacity: 0; transform: translateY(-6px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.7,.2,1); }
-.hero-fig.landed .lane { opacity: 1; transform: none; }
+.hero-fig.scan .tr { stroke-opacity: .26; }
+.hero-fig.scan .tr.on { stroke: var(--text-soft); stroke-opacity: .85; }
+.hero-fig .tr.ind.lit { stroke: var(--signal); stroke-opacity: 1; }
+.hero-fig .lane { opacity: 0; transition: opacity .6s ease; }
+.hero-fig.landed .lane { opacity: 1; }
 .hero-fig .lane-base { stroke: var(--border); stroke-width: 1; }
-.hero-fig .lane path { fill: none; stroke: var(--signal); stroke-width: 3; stroke-linecap: round; }
-.hero-fig .lane circle { fill: var(--paper); stroke: var(--signal); stroke-width: 1.5; }
+.hero-fig .seg { fill: none; stroke: var(--signal); stroke-width: 3; stroke-linecap: round; }
+.hero-fig .cap { fill: var(--paper); stroke: var(--signal); stroke-width: 1.5; opacity: 0; transition: opacity .25s; }
+.hero-fig .cap.lit { opacity: 1; }
+.hero-fig .lane.fading .seg, .hero-fig .lane.fading .cap { opacity: 0; transition: opacity .5s; }
 .hero-fig text { font-family: var(--sans); font-size: 13.5px; fill: var(--text-faint); }
 .hero-fig text .n { fill: var(--text); font-weight: 600; }
 .hero-fig text .n.sig { fill: var(--signal); }
 .hero-fig .cursor { opacity: 0; pointer-events: none; }
 .hero-fig .cursor line { stroke: var(--text-soft); stroke-width: 1; stroke-dasharray: 2 3; }
 .hero-fig .cursor text { fill: var(--text); font-weight: 600; }
-.hero-fig.scan .tr { stroke-opacity: .24; }
-.hero-fig.scan .tr.on { stroke-opacity: .9; stroke: var(--text-soft); }
-.hero-fig.scan .tr.ind { stroke-opacity: .55; }
-.hero-fig.scan .tr.ind.on { stroke: var(--signal); stroke-opacity: 1; }
-.hero-fig .lane path { transition: stroke-width .35s; }
-.hero-fig .lane circle { transition: fill .35s; }
-.hero-fig .lane path.on { stroke-width: 4.5; }
-.hero-fig .lane circle.on { fill: var(--signal); }
 .hero-fig figcaption { font-family: var(--sans); font-size: 12.5px; line-height: 1.5; color: var(--text-faint); margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
-  .hero-fig .tr, .hero-fig .lane { transition: none; }
+  .hero-fig .tr, .hero-fig .lane, .hero-fig .cap { transition: none; }
 }
 
 /* stats */
@@ -648,8 +650,8 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
     </div>
     </div>
     <figure class="hero-fig" id="hero-fig">
-      <svg role="img" aria-label="Illustration: dozens of overlapping trade holding windows, of which only a handful do not overlap."></svg>
-      <figcaption>Each grey line is one trade's 3–6 month hold, opened every few days, so they overlap. Only trades whose windows don't overlap are independent of each other. The moving line counts how many trades are open on each day.</figcaption>
+      <svg role="img" aria-label="Illustration: trades opened every 9 sessions over 752 test sessions, each with a 126-session window, overlap about 14 deep; back to back the windows fit only 5.97 times."></svg>
+      <figcaption>One symbol's 752 scored test sessions. Each line is a 126-session outcome window, one opened every 9 sessions for illustration, so about 14 overlap on any day. Back to back they fit only 752 ÷ 126 = 5.97 times: just under 6 independent outcomes (Section 7.1).</figcaption>
     </figure>
   </div>
 </header>
@@ -1356,9 +1358,14 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
   if (heroFig) hero(heroFig);
   function hero(fig) {
     var svg = $('svg', fig), NS = 'http://www.w3.org/2000/svg';
-    var W = 520, ROWS = 14, ROW_H = 13, TOP = 30, DX = 7;
+    // Section 7.1: one symbol's test split has 752 scored sessions (2023-03-07 to 2026-03-05), and each
+    // outcome window is 126 sessions, so back to back they fit 752 / 126 = 5.97 times. Entries every
+    // 9 sessions are for illustration; 126 is a multiple of 9, so the back-to-back trades are among them.
+    var SPAN = 752, HOLD = 126, EVERY = 9;
+    var W = 600, U = W / SPAN, ROWS = 15, ROW_H = 13, TOP = 30;
     var rowsEnd = TOP + (ROWS - 1) * ROW_H, cursorY = rowsEnd + 22, laneLabelY = rowsEnd + 46, laneY = rowsEnd + 62;
-    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (laneY + 8));
+    var axisY = laneY + 22;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + (axisY + 4));
     function el(name, attrs, parent) {
       var e = document.createElementNS(NS, name);
       for (var k in attrs) e.setAttribute(k, attrs[k]);
@@ -1373,66 +1380,89 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
       });
       return t;
     }
-    // Fixed seed: the same picture on every load.
-    var seed = 20260930;
-    function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
-    // A trade opens every DX units and is held 60-96; rows repeat every ROWS * DX = 98, so lines in a row never touch.
-    var trades = [];
-    for (var x = 0, k = 0; x < W; x += DX, k++) {
-      var len = 60 + rnd() * 36;
-      trades.push({ x0: x, x1: x + len, y: TOP + (k % ROWS) * ROW_H });
-    }
-    var complete = trades.filter(function (t) { return t.x1 <= W; });
-    var ind = [], end = -Infinity;
-    complete.forEach(function (t) { if (t.x0 >= end) { ind.push(t); end = t.x1; } });
 
-    label(0, 12, 'start', [['Trades opened every few days']]);
-    label(W, 12, 'end', [[String(complete.length), 'n'], [' trades']]);
+    // Rows repeat every ROWS * EVERY = 135 sessions, longer than a window, so lines in a row never touch.
+    var trades = [];
+    for (var d = 0, k = 0; d < SPAN; d += EVERY, k++) {
+      trades.push({ x0: d * U, x1: (d + HOLD) * U, y: TOP + (k % ROWS) * ROW_H, ind: d % HOLD === 0 });
+    }
     trades.forEach(function (t) {
       var x1 = Math.min(W, t.x1);
-      t.el = el('path', { d: 'M' + t.x0.toFixed(1) + ' ' + t.y + 'H' + x1.toFixed(1),
-        'class': 'tr' + (ind.indexOf(t) >= 0 ? ' ind' : '') });
+      t.el = el('path', { d: 'M' + t.x0.toFixed(1) + ' ' + t.y + 'H' + x1.toFixed(1), 'class': 'tr' + (t.ind ? ' ind' : '') });
       t.el.style.setProperty('--len', (x1 - t.x0 + 1).toFixed(1) + 'px');
       t.el.style.transitionDelay = (t.x0 / W * 0.9).toFixed(3) + 's';
     });
+
+    label(0, 12, 'start', [['A trade every ' + EVERY + ' sessions, each a ' + HOLD + '-session window']]);
+    label(W, 12, 'end', [[String(SPAN), 'n'], [' test sessions']]);
     var lane = el('g', { 'class': 'lane' });
-    label(0, laneLabelY, 'start', [['Non-overlapping, so independent']], lane);
-    label(W, laneLabelY, 'end', [[String(ind.length), 'n sig'], [' independent']], lane);
+    label(0, laneLabelY, 'start', [['Back to back, so independent']], lane);
+    var count = label(W, laneLabelY, 'end', [['', 'n sig'], [' independent']], lane).firstChild;
     el('line', { x1: 0, x2: W, y1: laneY, y2: laneY, 'class': 'lane-base' }, lane);
-    ind.forEach(function (t) {
-      t.lane = [
-        el('path', { d: 'M' + (t.x0 + 3).toFixed(1) + ' ' + laneY + 'H' + (t.x1 - 3).toFixed(1) }, lane),
-        el('circle', { cx: (t.x0 + 3).toFixed(1), cy: laneY, r: 3 }, lane),
-        el('circle', { cx: (t.x1 - 3).toFixed(1), cy: laneY, r: 3 }, lane)
-      ];
+    var segs = trades.filter(function (t) { return t.ind; }).map(function (t) {
+      // The last window is cut off by the end of the scored sessions: no end cap, it is 97% of a hold.
+      var a = t.x0 + 3, cut = t.x1 > W, b = cut ? W : t.x1 - 3;
+      var sg = { a: a, b: b, path: el('path', { 'class': 'seg' }, lane), caps: [el('circle', { 'class': 'cap', cx: a.toFixed(1), cy: laneY, r: 3 }, lane)] };
+      if (!cut) sg.caps.push(el('circle', { 'class': 'cap', cx: b.toFixed(1), cy: laneY, r: 3 }, lane));
+      return sg;
     });
+    label(0, axisY, 'start', [['Mar 2023']], lane);
+    label(W, axisY, 'end', [['Mar 2026']], lane);
 
     var cursor = el('g', { 'class': 'cursor' });
     var cLine = el('line', { y1: TOP - 7, y2: rowsEnd + 7 }, cursor);
     var cText = el('text', { y: cursorY, 'text-anchor': 'middle' }, cursor);
-    // The cursor sweeps left to right on its own, counting the trades open on each day.
-    var SWEEP = 11000, EDGE = 36, lastOpen = -1;
-    function scanTo(x) {
+
+    // Everything the scan line has reached by x: lines open at x, back-to-back trades it has touched
+    // lit up, their segments drawn up to x, and how many holds fit so far.
+    function show(x) {
       var open = 0;
       trades.forEach(function (t) {
         var on = t.x0 <= x && x < t.x1;
         if (on) open++;
-        if (t.on === on) return;
-        t.on = on;
-        t.el.classList.toggle('on', on);
-        if (t.lane) t.lane.forEach(function (e) { e.classList.toggle('on', on); });
+        if (t.on !== on) { t.on = on; t.el.classList.toggle('on', on); }
+        if (t.ind) setLit(t, x >= t.x0);
       });
-      cLine.setAttribute('x1', x); cLine.setAttribute('x2', x);
-      cText.setAttribute('x', Math.max(34, Math.min(W - 34, x)));
-      if (open !== lastOpen) { cText.textContent = open + ' open'; lastOpen = open; }
-      // Fade in at the left edge and out at the right, so the wrap-around is not a jump.
-      cursor.style.opacity = Math.max(0, Math.min(1, x / EDGE, (W - x) / EDGE)).toFixed(3);
+      segs.forEach(function (sg) {
+        var end = Math.min(sg.b, x);
+        if (end > sg.a) { sg.path.setAttribute('d', 'M' + sg.a.toFixed(1) + ' ' + laneY + 'H' + end.toFixed(1)); sg.path.style.display = ''; }
+        else sg.path.style.display = 'none';
+        sg.caps[0].classList.toggle('lit', x >= sg.a);
+        if (sg.caps[1]) sg.caps[1].classList.toggle('lit', x >= sg.b);
+      });
+      count.textContent = (Math.min(x, W) / U / HOLD).toFixed(2);
+      return open;
     }
-    var running = false, onScreen = true, started = false, t0 = null;
+    function setLit(t, lit) { if (t.lit !== lit) { t.lit = lit; t.el.classList.toggle('lit', lit); } }
+
+    // Each cycle: sweep for SWEEP ms, hold the finished picture, fade it back to grey, start over.
+    var SWEEP = 10000, REST = 2200, FADE_OUT = 600, EDGE = 36, CYCLE = SWEEP + REST;
+    var running = false, onScreen = true, started = false, t0 = null, fading = false;
     function frame(ts) {
       if (!running) return;
-      if (t0 === null) t0 = ts;
-      scanTo(((ts - t0) % SWEEP) / SWEEP * W);
+      // (Re)starting begins with the fade-out, so the full picture clears before the first sweep.
+      if (t0 === null) t0 = ts - (CYCLE - FADE_OUT);
+      var ph = (ts - t0) % CYCLE;
+      if (ph >= CYCLE - FADE_OUT) {
+        if (!fading) {
+          fading = true;
+          lane.classList.add('fading');
+          trades.forEach(function (t) {
+            if (t.ind) setLit(t, false);
+            if (t.on) { t.on = false; t.el.classList.remove('on'); }
+          });
+        }
+        cursor.style.opacity = 0;
+      } else {
+        if (fading) { fading = false; lane.classList.remove('fading'); }
+        var x = ph < SWEEP ? ph / SWEEP * W : W;
+        var open = show(x);
+        cLine.setAttribute('x1', x); cLine.setAttribute('x2', x);
+        cText.setAttribute('x', Math.max(34, Math.min(W - 34, x)));
+        cText.textContent = open + ' open';
+        // Fade in at the left edge and out at the right.
+        cursor.style.opacity = Math.max(0, Math.min(1, x / EDGE, (W - x) / EDGE)).toFixed(3);
+      }
       requestAnimationFrame(frame);
     }
     function update() {
@@ -1441,16 +1471,17 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
       if (!go) running = false;
     }
 
+    show(W); // the finished picture: what the draw-in reveals, and all that print or reduced motion get
     function finish() { fig.classList.add('drawn'); fig.classList.add('landed'); }
     if (PRINT || REDUCED) { finish(); return; }
     svg.getBoundingClientRect(); // commit the undrawn state so the transition runs
     setTimeout(function () { fig.classList.add('drawn'); }, 120);
+    setTimeout(function () { fig.classList.add('landed'); }, 1500);
     setTimeout(function () {
-      fig.classList.add('landed');
       fig.classList.add('scan');
       started = true;
       update();
-    }, 1600);
+    }, 3200);
     document.addEventListener('visibilitychange', update);
     if (HAS_IO) new IntersectionObserver(function (e) { onScreen = e[0].isIntersecting; update(); }).observe(svg);
   }
