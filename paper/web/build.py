@@ -1,23 +1,22 @@
-"""Build the paper's web page and PDF from paper_src.html and the paper run's figures.
+"""Build the paper's PDF from paper_src.html and the paper run's figures.
 
-    python paper/web/build.py            # paper/web/public/index.html and paper.pdf
-    python paper/web/build.py --no-pdf   # index.html only
+    python paper/web/build.py   # paper/web/public/paper.pdf
 
 Figures are read from paper/results/figures/ (written by scripts/paper_run.py) and
-inlined, so index.html is one self-contained file. The PDF is printed from that page
-with headless Chrome, using the page's print stylesheet; the ?print query tells the
-page's script to skip its animations so nothing is caught mid-transition.
+inlined into a temporary copy of the page, which headless Chrome prints using the
+page's print stylesheet; the ?print query tells the page's script to skip its
+animations so nothing is caught mid-transition. The page itself is not published.
 
-public/ is exactly what Cloudflare serves (see wrangler.jsonc): the two generated
-files plus logo.png and _headers, which are edited by hand.
+public/ is exactly what Cloudflare serves (see wrangler.jsonc): paper.pdf, built here,
+and index.html, logo.png and _headers, which are edited by hand.
 """
 
-import argparse
 import base64
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +44,7 @@ CHROME_CANDIDATES = [
 ]
 
 
-def build_html() -> Path:
+def build_html(tmp: Path) -> Path:
     html = SRC.read_text(encoding="utf-8")
     for key, name in FIGURE_FILES.items():
         data = base64.b64encode((FIGURES / name).read_bytes()).decode("ascii")
@@ -53,9 +52,9 @@ def build_html() -> Path:
     leftover = re.findall(r"\{\{[a-z0-9_]+\}\}", html)
     if leftover:
         sys.exit(f"unfilled placeholders: {sorted(set(leftover))}")
-    out = OUT / "index.html"
-    out.write_text(html, encoding="utf-8")
-    return out
+    page = tmp / "paper.html"
+    page.write_text(html, encoding="utf-8")
+    return page
 
 
 def find_chrome() -> str:
@@ -63,7 +62,7 @@ def find_chrome() -> str:
         path = shutil.which(candidate) or (candidate if Path(candidate).exists() else None)
         if path:
             return path
-    sys.exit("Chrome not found; rerun with --no-pdf or install Chrome")
+    sys.exit("Chrome not found; install Chrome to print the PDF")
 
 
 def build_pdf(page: Path) -> Path:
@@ -85,13 +84,9 @@ def build_pdf(page: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--no-pdf", action="store_true", help="skip printing the PDF")
-    args = parser.parse_args()
-    page = build_html()
-    print(f"wrote {page.relative_to(ROOT)}")
-    if not args.no_pdf:
-        print(f"wrote {build_pdf(page).relative_to(ROOT)}")
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf = build_pdf(build_html(Path(tmp)))
+    print(f"wrote {pdf.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

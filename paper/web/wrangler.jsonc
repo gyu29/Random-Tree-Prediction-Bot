@@ -1,11 +1,11 @@
-// Cloudflare Workers config for the paper's web page. There is no Worker script:
-// Cloudflare serves the files in public/ as static assets.
+// Cloudflare Workers config for the works site (public/index.html, which links the paper's
+// PDF). There is no Worker script: Cloudflare serves the files in public/ as static assets.
 //
 //   npm install          # once, installs Wrangler
 //   npx wrangler login   # once, links Wrangler to your Cloudflare account
-//   npm run deploy       # rebuilds public/ with build.py, then runs wrangler deploy
+//   npm run deploy       # rebuilds public/paper.pdf with build.py, then runs wrangler deploy
 //
-// `npx wrangler deploy` on its own uploads public/ as it is, without rebuilding.
+// `npx wrangler deploy` on its own uploads public/ as it is, without rebuilding the PDF.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "proud-moon-b1cb",

@@ -590,6 +590,7 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
   .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
   .stat { padding: 10px 12px; }
   .stat .num { font-size: 17pt; }
+  .kicker, .stat .num.ok, .stat .num.warn { color: #000; }
   h1 { font-size: 26pt; max-width: none; }
   h2 { font-size: 16pt; margin-top: 18px; break-after: avoid; }
   h3 { font-size: 11.5pt; margin-top: 18px; break-after: avoid; }
@@ -711,7 +712,6 @@ tbody tr.hl:hover td { background: var(--signal-soft); }
     <!-- 1 -->
     <section id="introduction">
       <h2><span class="n">1</span>Introduction</h2>
-      <p class="thesis">A backtest with thousands of trades can hold only a few dozen independent observations.</p>
       <p>Trades that overlap in time share most of their outcome window and tickers in the same category move together, both of which make a result look more certain than it is, and neither shows up in a trade count or a win rate.</p>
       <p>This paper measures that gap on one system. The model was built to predict whether an ETF would be materially higher three to six months after entry. It was then tested under progressively stricter checks until nothing survived.</p>
       <p>The model is a random forest plus XGBoost ensemble, trained on technical features across eight factor categories and 162 symbols. Although early versions looked strong, with high win rates, large compounded returns, and out-of-sample ROC-AUCs up to 0.90, under a protocol fixed before the final test, two of eight categories produced a decision rule, and neither beat the simple alternative of ignoring the model (+1.71 and +1.34 standard errors against a bar of 2).</p>
